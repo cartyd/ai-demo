@@ -8,7 +8,7 @@ from ..domain.types import Grid, Coord, AlgoConfig, PathfindingResult
 from ..domain.astar import AStarAlgorithm
 from ..utils.grid_factory import (
     create_empty_grid, generate_solvable_grid, generate_maze_grid, 
-    generate_thick_wall_maze, generate_multipath_maze, generate_branching_maze,
+    generate_multipath_maze, generate_branching_maze,
     place_start_and_target
 )
 from ..utils.rng import set_global_seed
@@ -152,20 +152,6 @@ class AStarController(QObject):
             self.error_occurred.emit(f"Failed to generate maze: {str(e)}")
             return False
     
-    def generate_thick_wall_maze(self, width: int, height: int, seed: Optional[int] = None) -> bool:
-        """Generate a maze with thick walls for classic appearance."""
-        try:
-            set_global_seed(seed)
-            self._grid, self._start_coord, self._target_coord = generate_thick_wall_maze(
-                width, height, seed=seed
-            )
-            self._algorithm.reset()
-            self._state_machine.reset_to_idle()
-            self.grid_updated.emit()
-            return True
-        except Exception as e:
-            self.error_occurred.emit(f"Failed to generate thick wall maze: {str(e)}")
-            return False
     
     def generate_corridor_maze(self, width: int, height: int, seed: Optional[int] = None) -> bool:
         """Generate a corridor-style maze with wider passages."""

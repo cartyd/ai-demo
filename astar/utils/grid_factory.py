@@ -631,53 +631,6 @@ def generate_solvable_grid(width: int, height: int, wall_density: float,
     return grid, start, target
 
 
-def generate_thick_wall_maze(width: int, height: int, seed: Optional[int] = None) -> Tuple[Grid, Coord, Coord]:
-    """
-    Generate a maze with thicker walls that resembles classic printed mazes.
-    Uses a different approach to create wider wall structures while ensuring solvability.
-    
-    Args:
-        width: Grid width (minimum 7)
-        height: Grid height (minimum 7)
-        seed: Random seed for reproducibility
-        
-    Returns:
-        Tuple of (grid, start_coord, target_coord)
-        
-    Raises:
-        ValueError: If width or height is less than 7
-    """
-    if width < 7 or height < 7:
-        raise ValueError(f"Thick wall maze dimensions must be at least 7x7, got {width}x{height}")
-    rng = SeededRNG(seed)
-    
-    max_attempts = 10
-    for attempt in range(max_attempts):
-        # Create base maze structure
-        grid, _, _ = generate_maze_grid(width, height, seed + attempt)
-        
-        # Thicken walls by expanding wall areas, but more conservatively
-        _thicken_maze_walls_safe(grid, rng)
-        
-        # Place new start and target after wall thickening
-        try:
-            start, target = _place_start_target_in_maze(grid, rng)
-            
-            # Verify the maze is solvable (use 4-dir for conservative check)
-            if ensure_path_exists(grid, start, target, allow_diagonal=False):
-                return grid, start, target
-            else:
-                # If not solvable, try clearing some strategic walls
-                _ensure_basic_path(grid, start, target, rng)
-                if ensure_path_exists(grid, start, target, allow_diagonal=False):
-                    return grid, start, target
-                    
-        except ValueError:
-            # Not enough empty cells, try again with less thickening
-            continue
-    
-    # Fallback: return a regular maze if thick wall generation consistently fails
-    return generate_maze_grid(width, height, seed)
 
 
 def generate_multipath_maze(width: int, height: int, seed: Optional[int] = None) -> Tuple[Grid, Coord, Coord]:
@@ -925,85 +878,10 @@ def _is_safe_path_cell(grid: Grid, coord: Coord) -> bool:
     return empty_neighbors <= 3  # Allow up to 3 empty neighbors
 
 
-def _thicken_maze_walls(grid: Grid, rng: SeededRNG) -> None:
-    """
-    Thicken existing walls to create a more traditional maze appearance.
-    """
-    # Find all current wall positions
-    wall_positions = []
-    for node in grid.nodes.values():
-        if node.state == "wall":
-            wall_positions.append(node.coord)
-    
-    # For each wall, occasionally expand it in random directions
-    for wall_coord in wall_positions:
-        if rng.random() < 0.3:  # 30% chance to thicken each wall
-            # Choose a random direction to expand
-            directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-            direction = rng.choice(directions)
-            
-            # Expand in that direction
-            expand_coord = (wall_coord[0] + direction[0], wall_coord[1] + direction[1])
-            
-            if grid.is_valid_coord(expand_coord):
-                node = grid.get_node(expand_coord)
-                if node and node.state == "empty":
-                    # Only thicken if it doesn't block all paths
-                    grid.set_node_state(expand_coord, "wall")
-                    node.walkable = False
 
 
-def _thicken_maze_walls_safe(grid: Grid, rng: SeededRNG) -> None:
-    """
-    Safely thicken existing walls while preserving connectivity.
-    This version is more conservative to prevent creating unsolvable mazes.
-    """
-    # Find all current wall positions
-    wall_positions = []
-    for node in grid.nodes.values():
-        if node.state == "wall":
-            wall_positions.append(node.coord)
-    
-    # Thicken walls more conservatively
-    for wall_coord in wall_positions:
-        if rng.random() < 0.15:  # Reduced from 30% to 15% chance
-            # Choose a random direction to expand
-            directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-            direction = rng.choice(directions)
-            
-            # Expand in that direction
-            expand_coord = (wall_coord[0] + direction[0], wall_coord[1] + direction[1])
-            
-            if grid.is_valid_coord(expand_coord):
-                node = grid.get_node(expand_coord)
-                if node and node.state == "empty":
-                    # Only thicken if it's safe (won't isolate areas)
-                    if _is_safe_to_thicken_wall(grid, expand_coord):
-                        grid.set_node_state(expand_coord, "wall")
-                        node.walkable = False
 
 
-def _is_safe_to_thicken_wall(grid: Grid, coord: Coord) -> bool:
-    """
-    Check if it's safe to add a wall at the given coordinate without isolating areas.
-    """
-    x, y = coord
-    
-    # Count empty neighbors in 3x3 area
-    empty_neighbors = []
-    for dx in [-1, 0, 1]:
-        for dy in [-1, 0, 1]:
-            if dx == 0 and dy == 0:
-                continue
-            neighbor_coord = (x + dx, y + dy)
-            if grid.is_valid_coord(neighbor_coord):
-                neighbor_node = grid.get_node(neighbor_coord)
-                if neighbor_node and neighbor_node.walkable:
-                    empty_neighbors.append(neighbor_coord)
-    
-    # Don't thicken if it would leave too few escape routes
-    # This helps prevent creating isolated pockets
-    return len(empty_neighbors) <= 4  # Conservative threshold
 
 
 def _add_connecting_paths(grid: Grid, rng: SeededRNG) -> None:

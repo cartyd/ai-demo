@@ -38,9 +38,6 @@ class MainWindow(QMainWindow):
         self._update_button_states()
         self._update_statistics_display()
         
-        # Initialize maze button text
-        maze_types = ["Classic Maze", "Multi-Path Maze", "Branching Maze", "Thick Wall Maze"]
-        self.maze_grid_btn.setText(f"Generate Maze ({maze_types[self.maze_type]})")
     
     def _create_ui(self):
         """Create the user interface."""
@@ -114,10 +111,17 @@ class MainWindow(QMainWindow):
         
         self.new_grid_btn = QPushButton("New Grid")
         self.random_grid_btn = QPushButton("Random Grid")
-        self.maze_grid_btn = QPushButton("Generate Maze")
-        self.maze_type = 0  # 0=recursive, 1=multipath, 2=branching, 3=thick walls
+        
+        # Maze generation controls
+        grid_layout.addWidget(QLabel("Maze:"))
+        self.maze_type_combo = QComboBox()
+        self.maze_type_combo.addItems(["Classic Maze", "Multi-Path Maze", "Branching Maze"])
+        self.maze_type_combo.setCurrentIndex(0)
+        self.maze_grid_btn = QPushButton("Generate")
+        
         grid_layout.addWidget(self.new_grid_btn)
         grid_layout.addWidget(self.random_grid_btn)
+        grid_layout.addWidget(self.maze_type_combo)
         grid_layout.addWidget(self.maze_grid_btn)
         
         # Edit mode
@@ -339,28 +343,22 @@ class MainWindow(QMainWindow):
         self._reset_statistics()
     
     def _on_maze_grid(self):
-        """Generate different types of mazes, cycling through styles."""
+        """Generate the selected type of maze."""
         width = self.width_spin.value()
         height = self.height_spin.value()
         
-        maze_types = ["Classic Maze", "Multi-Path Maze", "Branching Maze", "Thick Wall Maze"]
+        # Get selected maze type from dropdown
+        selected_maze = self.maze_type_combo.currentText()
         
-        if self.maze_type == 0:
+        if selected_maze == "Classic Maze":
             self.controller.generate_maze_grid(width, height)
-            self.status_bar.showMessage(f"Generated: {maze_types[0]} (single optimal path)")
-        elif self.maze_type == 1:
+            self.status_bar.showMessage("Generated: Classic Maze (single optimal path)")
+        elif selected_maze == "Multi-Path Maze":
             self.controller.generate_multipath_maze(width, height)
-            self.status_bar.showMessage(f"Generated: {maze_types[1]} (multiple paths available!)")
-        elif self.maze_type == 2:
+            self.status_bar.showMessage("Generated: Multi-Path Maze (multiple paths available!)")
+        else:  # Branching Maze
             self.controller.generate_branching_maze(width, height)
-            self.status_bar.showMessage(f"Generated: {maze_types[2]} (many decision points!)")
-        else:
-            self.controller.generate_thick_wall_maze(width, height)
-            self.status_bar.showMessage(f"Generated: {maze_types[3]} (classic appearance)")
-        
-        # Cycle to next maze type
-        self.maze_type = (self.maze_type + 1) % 4
-        self.maze_grid_btn.setText(f"Generate Maze ({maze_types[self.maze_type]})")
+            self.status_bar.showMessage("Generated: Branching Maze (many decision points!)")
         
         self._reset_statistics()
     
