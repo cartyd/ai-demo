@@ -1,0 +1,1 @@
+"""User Interface layer - Qt widgets and views."""

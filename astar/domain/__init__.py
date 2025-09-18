@@ -1,0 +1,1 @@
+"""Domain layer - Pure A* logic and types."""
