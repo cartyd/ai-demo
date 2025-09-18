@@ -791,28 +791,43 @@ def generate_branching_maze(width: int, height: int, seed: Optional[int] = None)
 def _create_branching_paths(grid: Grid, rng: SeededRNG) -> None:
     """
     Create a branching path structure with multiple routes.
+    This creates a network more similar in density to the other maze types.
     """
-    # Start from center and branch outward
-    center_x, center_y = grid.width // 2, grid.height // 2
-    start_points = [(center_x, center_y)]
+    # Use a different approach - create multiple connected areas
+    directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
     
-    # Create main paths from center
-    directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]  # 4 cardinal directions
+    # Create several seed points across the grid
+    seed_points = []
+    grid_quarters = [
+        (grid.width // 4, grid.height // 4),
+        (3 * grid.width // 4, grid.height // 4),
+        (grid.width // 4, 3 * grid.height // 4),
+        (3 * grid.width // 4, 3 * grid.height // 4),
+        (grid.width // 2, grid.height // 2),  # Center
+    ]
     
-    for direction in directions:
-        _create_branching_path_recursive(grid, (center_x, center_y), direction, rng, 0.8)
+    # Create initial paths from each seed point
+    for seed_x, seed_y in grid_quarters:
+        if grid.is_valid_coord((seed_x, seed_y)):
+            # Create paths in multiple directions from each seed
+            grid.set_node_state((seed_x, seed_y), "empty")
+            node = grid.get_node((seed_x, seed_y))
+            if node:
+                node.walkable = True
+            
+            # Create 2-3 paths from each seed point
+            num_paths = rng.randint(2, 4)
+            chosen_directions = rng.sample(directions, num_paths)
+            
+            for direction in chosen_directions:
+                length = rng.randint(8, 15)
+                _create_straight_path_with_branches(grid, (seed_x, seed_y), direction, rng, length)
     
-    # Add some random branching paths
-    for _ in range(rng.randint(3, 6)):
-        # Pick a random empty cell to start a new branch from
-        empty_cells = [node.coord for node in grid.nodes.values() 
-                      if node.walkable and node.state == "empty"]
-        
-        if empty_cells:
-            branch_start = rng.choice(empty_cells)
-            branch_direction = rng.choice(directions)
-            _create_branching_path_recursive(grid, branch_start, branch_direction, 
-                                           rng, 0.6, max_length=8)
+    # Add connecting paths between different areas
+    _add_connecting_corridors(grid, rng)
+    
+    # Fill in some additional random paths to increase density
+    _add_density_paths(grid, rng)
 
 
 def _create_branching_path_recursive(grid: Grid, start: Coord, direction: Tuple[int, int], 
@@ -828,7 +843,21 @@ def _create_branching_path_recursive(grid: Grid, start: Coord, direction: Tuple[
         next_pos = (current[0] + direction[0], current[1] + direction[1])
         
         if not grid.is_valid_coord(next_pos) or not _is_safe_path_cell(grid, next_pos):
-            break
+            # Try a different direction if blocked
+            alternative_directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+            alternative_directions.remove(direction)
+            
+            found_alternative = False
+            for alt_dir in alternative_directions:
+                alt_pos = (current[0] + alt_dir[0], current[1] + alt_dir[1])
+                if grid.is_valid_coord(alt_pos) and _is_safe_path_cell(grid, alt_pos):
+                    next_pos = alt_pos
+                    direction = alt_dir
+                    found_alternative = True
+                    break
+            
+            if not found_alternative:
+                break
             
         # Create the path cell
         grid.set_node_state(next_pos, "empty")
@@ -839,31 +868,37 @@ def _create_branching_path_recursive(grid: Grid, start: Coord, direction: Tuple[
         current = next_pos
         length += 1
         
-        # Occasionally change direction or create a branch
-        if rng.random() < 0.3:  # 30% chance to turn or branch
-            if rng.random() < 0.5:  # 50% chance to turn vs branch
-                # Turn to a new direction
-                new_directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-                new_directions.remove(direction)
-                direction = rng.choice(new_directions)
-            else:
+        # More frequent branching to create denser network
+        if rng.random() < 0.4:  # 40% chance to turn or branch (increased from 30%)
+            if rng.random() < 0.6:  # 60% chance to branch vs turn (increased branching)
                 # Create a branch
                 branch_directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
                 branch_directions.remove(direction)
                 branch_direction = rng.choice(branch_directions)
                 
+                # Less probability decay for deeper branches
                 _create_branching_path_recursive(grid, current, branch_direction, 
-                                               rng, continue_prob * 0.7, max_length // 2)
+                                               rng, continue_prob * 0.8, max_length // 2 + 2)
+            else:
+                # Turn to a new direction
+                new_directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+                new_directions.remove(direction)
+                direction = rng.choice(new_directions)
 
 
 def _is_safe_path_cell(grid: Grid, coord: Coord) -> bool:
     """
     Check if it's safe to place a path cell at this location.
-    Prevents creating too large open areas.
+    Prevents creating too large open areas while allowing good connectivity.
     """
     x, y = coord
     
-    # Check if there are too many empty neighbors
+    # Don't place path if the cell is already a path
+    node = grid.get_node(coord)
+    if node and node.walkable:
+        return False
+    
+    # Check if there are too many empty neighbors (relaxed from 3 to 5)
     empty_neighbors = 0
     for dx in [-1, 0, 1]:
         for dy in [-1, 0, 1]:
@@ -871,11 +906,11 @@ def _is_safe_path_cell(grid: Grid, coord: Coord) -> bool:
                 continue
             check_coord = (x + dx, y + dy)
             if grid.is_valid_coord(check_coord):
-                node = grid.get_node(check_coord)
-                if node and node.walkable:
+                neighbor_node = grid.get_node(check_coord)
+                if neighbor_node and neighbor_node.walkable:
                     empty_neighbors += 1
     
-    return empty_neighbors <= 3  # Allow up to 3 empty neighbors
+    return empty_neighbors <= 5  # Allow up to 5 empty neighbors for better connectivity
 
 
 
@@ -970,6 +1005,110 @@ def _create_simple_path_from_center(grid: Grid, center: Coord, direction: Tuple[
             current = next_coord
         else:
             break
+
+
+def _create_straight_path_with_branches(grid: Grid, start: Coord, direction: Tuple[int, int], 
+                                       rng: SeededRNG, length: int) -> None:
+    """
+    Create a straight path with occasional branches.
+    """
+    current = start
+    
+    for i in range(length):
+        # Move in the main direction
+        next_pos = (current[0] + direction[0], current[1] + direction[1])
+        
+        if not grid.is_valid_coord(next_pos):
+            break
+            
+        # Create the path cell
+        node = grid.get_node(next_pos)
+        if node and node.state == "wall":
+            grid.set_node_state(next_pos, "empty")
+            node.walkable = True
+        
+        current = next_pos
+        
+        # Occasionally create a branch (every 3-5 steps)
+        if i > 2 and i % rng.randint(3, 6) == 0:
+            # Create a short branch
+            branch_directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+            branch_directions.remove(direction)
+            
+            for branch_dir in rng.sample(branch_directions, rng.randint(1, 2)):
+                branch_length = rng.randint(3, 8)
+                _create_simple_straight_path(grid, current, branch_dir, branch_length)
+
+
+def _create_simple_straight_path(grid: Grid, start: Coord, direction: Tuple[int, int], length: int) -> None:
+    """
+    Create a simple straight path without branches.
+    """
+    current = start
+    
+    for _ in range(length):
+        next_pos = (current[0] + direction[0], current[1] + direction[1])
+        
+        if not grid.is_valid_coord(next_pos):
+            break
+            
+        node = grid.get_node(next_pos)
+        if node and node.state == "wall":
+            grid.set_node_state(next_pos, "empty")
+            node.walkable = True
+        
+        current = next_pos
+
+
+def _add_connecting_corridors(grid: Grid, rng: SeededRNG) -> None:
+    """
+    Add corridors to connect different areas of the maze.
+    """
+    # Find empty cells in different quadrants
+    quadrants = [
+        [], [], [], []  # top-left, top-right, bottom-left, bottom-right
+    ]
+    
+    for node in grid.nodes.values():
+        if node.walkable:
+            x, y = node.coord
+            if x < grid.width // 2 and y < grid.height // 2:
+                quadrants[0].append(node.coord)
+            elif x >= grid.width // 2 and y < grid.height // 2:
+                quadrants[1].append(node.coord)
+            elif x < grid.width // 2 and y >= grid.height // 2:
+                quadrants[2].append(node.coord)
+            else:
+                quadrants[3].append(node.coord)
+    
+    # Create connections between quadrants
+    connections = [(0, 1), (0, 2), (1, 3), (2, 3), (0, 3), (1, 2)]  # Various quadrant pairs
+    
+    for q1, q2 in rng.sample(connections, min(3, len(connections))):
+        if quadrants[q1] and quadrants[q2]:
+            start = rng.choice(quadrants[q1])
+            end = rng.choice(quadrants[q2])
+            _create_simple_path(grid, start, end, rng)
+
+
+def _add_density_paths(grid: Grid, rng: SeededRNG) -> None:
+    """
+    Add additional paths to increase overall maze density.
+    """
+    # Get all empty cells
+    empty_cells = [node.coord for node in grid.nodes.values() if node.walkable]
+    
+    if len(empty_cells) < 10:
+        return
+    
+    # Add random paths to increase density
+    num_additional = min(15, len(empty_cells) // 5)
+    
+    for _ in range(num_additional):
+        start = rng.choice(empty_cells)
+        direction = rng.choice([(0, 1), (1, 0), (0, -1), (-1, 0)])
+        length = rng.randint(5, 12)
+        _create_simple_straight_path(grid, start, direction, length)
 
 
 def _ensure_basic_path(grid: Grid, start: Coord, target: Coord, rng: SeededRNG) -> None:
