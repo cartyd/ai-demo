@@ -99,13 +99,13 @@ class MainWindow(QMainWindow):
         
         grid_layout.addWidget(QLabel("Size:"))
         self.width_spin = QSpinBox()
-        self.width_spin.setRange(5, 60)
+        self.width_spin.setRange(7, 99)
         self.width_spin.setValue(25)
         grid_layout.addWidget(self.width_spin)
         
         grid_layout.addWidget(QLabel("×"))
         self.height_spin = QSpinBox()
-        self.height_spin.setRange(5, 60) 
+        self.height_spin.setRange(7, 99) 
         self.height_spin.setValue(25)
         grid_layout.addWidget(self.height_spin)
         
