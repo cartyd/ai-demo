@@ -110,7 +110,6 @@ class MainWindow(QMainWindow):
         grid_layout.addWidget(self.height_spin)
         
         self.new_grid_btn = QPushButton("New Grid")
-        self.random_grid_btn = QPushButton("Random Grid")
         
         # Maze generation controls
         grid_layout.addWidget(QLabel("Maze:"))
@@ -120,7 +119,6 @@ class MainWindow(QMainWindow):
         self.maze_grid_btn = QPushButton("Generate")
         
         grid_layout.addWidget(self.new_grid_btn)
-        grid_layout.addWidget(self.random_grid_btn)
         grid_layout.addWidget(self.maze_type_combo)
         grid_layout.addWidget(self.maze_grid_btn)
         
@@ -269,7 +267,6 @@ class MainWindow(QMainWindow):
         
         # Grid controls
         self.new_grid_btn.clicked.connect(self._on_new_grid)
-        self.random_grid_btn.clicked.connect(self._on_random_grid)
         self.maze_grid_btn.clicked.connect(self._on_maze_grid)
         
         # Edit mode
@@ -296,7 +293,6 @@ class MainWindow(QMainWindow):
         
         # Grid controls
         QShortcut(QKeySequence("Ctrl+N"), self, self._on_new_grid)
-        QShortcut(QKeySequence("Ctrl+R"), self, self._on_random_grid)
         QShortcut(QKeySequence("Ctrl+M"), self, self._on_maze_grid)
         
         # Application controls
@@ -335,12 +331,6 @@ class MainWindow(QMainWindow):
         self.controller.create_new_grid(width, height)
         self._reset_statistics()
     
-    def _on_random_grid(self):
-        """Generate a random grid."""
-        width = self.width_spin.value()
-        height = self.height_spin.value()
-        self.controller.generate_random_grid(width, height, 0.45)  # 45% walls
-        self._reset_statistics()
     
     def _on_maze_grid(self):
         """Generate the selected type of maze."""
@@ -485,7 +475,6 @@ Algorithm Configuration:
 • R: Reset algorithm
 • Q/Esc: Quit application
 • Ctrl+N: New empty grid
-• Ctrl+R: Random grid
 • Ctrl+M: Generate maze
 """
         

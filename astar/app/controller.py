@@ -122,20 +122,6 @@ class AStarController(QObject):
             self.error_occurred.emit(f"Failed to create grid: {str(e)}")
             return False
     
-    def generate_random_grid(self, width: int, height: int, wall_density: float, seed: Optional[int] = None) -> bool:
-        """Generate a random solvable grid."""
-        try:
-            set_global_seed(seed)
-            self._grid, self._start_coord, self._target_coord = generate_solvable_grid(
-                width, height, wall_density, seed=seed
-            )
-            self._algorithm.reset()
-            self._state_machine.reset_to_idle()
-            self.grid_updated.emit()
-            return True
-        except Exception as e:
-            self.error_occurred.emit(f"Failed to generate grid: {str(e)}")
-            return False
     
     def generate_maze_grid(self, width: int, height: int, seed: Optional[int] = None) -> bool:
         """Generate a proper maze using recursive backtracking."""
