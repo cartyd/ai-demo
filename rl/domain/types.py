@@ -1,0 +1,190 @@
+"""Core type definitions for the RL pathfinding algorithm."""
+
+from dataclasses import dataclass
+from typing import Optional, Tuple, Literal, Dict
+import numpy as np
+
+# Coordinate type for grid positions
+Coord = Tuple[int, int]
+
+# Node states for visualization - extended for RL
+NodeState = Literal[
+    "empty", "wall", "start", "target",
+    "visited", "current", "path", "q_high", "q_medium", "q_low"
+]
+
+# Actions the RL agent can take
+Action = Literal["up", "down", "left", "right"]
+ActionInt = Literal[0, 1, 2, 3]  # Numerical representation
+
+# Training phases
+TrainingPhase = Literal["training", "testing", "converged"]
+
+
+@dataclass
+class QValues:
+    """Stores Q-values for all actions at a state."""
+    up: float = 0.0
+    down: float = 0.0
+    left: float = 0.0
+    right: float = 0.0
+    
+    def as_array(self) -> np.ndarray:
+        """Return Q-values as numpy array."""
+        return np.array([self.up, self.down, self.left, self.right])
+    
+    def from_array(self, values: np.ndarray) -> None:
+        """Set Q-values from numpy array."""
+        self.up = float(values[0])
+        self.down = float(values[1])
+        self.left = float(values[2])
+        self.right = float(values[3])
+    
+    def max_value(self) -> float:
+        """Get the maximum Q-value."""
+        return max(self.up, self.down, self.left, self.right)
+    
+    def best_action(self) -> ActionInt:
+        """Get the action with highest Q-value."""
+        values = self.as_array()
+        return int(np.argmax(values))
+
+
+@dataclass
+class GridNode:
+    """Represents a single node in the pathfinding grid."""
+    id: str
+    coord: Coord
+    q_values: QValues
+    walkable: bool = True
+    weight: float = 1.0
+    state: NodeState = "empty"
+    visit_count: int = 0
+    last_reward: float = 0.0
+
+    def reset_rl_data(self):
+        """Reset RL-related data."""
+        self.q_values = QValues()
+        self.visit_count = 0
+        self.last_reward = 0.0
+
+    def is_passable(self) -> bool:
+        """Check if this node can be traversed."""
+        return self.walkable and self.state not in ["wall"]
+
+
+@dataclass
+class Grid:
+    """Represents the entire pathfinding grid."""
+    width: int
+    height: int
+    nodes: Dict[str, GridNode]
+
+    def get_node(self, coord: Coord) -> Optional[GridNode]:
+        """Get node at coordinate, returns None if out of bounds."""
+        node_id = f"{coord[0]},{coord[1]}"
+        return self.nodes.get(node_id)
+
+    def set_node_state(self, coord: Coord, state: NodeState):
+        """Set the state of a node at given coordinate."""
+        node = self.get_node(coord)
+        if node:
+            node.state = state
+
+    def is_valid_coord(self, coord: Coord) -> bool:
+        """Check if coordinate is within grid bounds."""
+        x, y = coord
+        return 0 <= x < self.width and 0 <= y < self.height
+
+    def reset_visualization_states(self):
+        """Reset all nodes to remove visualization states."""
+        for node in self.nodes.values():
+            if node.state in ["visited", "current", "path", "q_high", "q_medium", "q_low"]:
+                node.state = "empty"
+
+    def reset_q_values(self):
+        """Reset all Q-values in the grid."""
+        for node in self.nodes.values():
+            node.reset_rl_data()
+
+
+@dataclass
+class RLConfig:
+    """Configuration for the RL algorithm."""
+    learning_rate: float = 0.1
+    discount_factor: float = 0.9
+    epsilon: float = 0.1  # Exploration rate
+    epsilon_decay: float = 0.995
+    epsilon_min: float = 0.01
+    max_episodes: int = 1000
+    max_steps_per_episode: int = 1000
+    reward_goal: float = 100.0
+    reward_wall: float = -10.0
+    reward_step: float = -1.0
+    step_mode: bool = False
+    show_q_values: bool = True
+
+
+@dataclass
+class Episode:
+    """Represents a single training episode."""
+    number: int
+    steps: int
+    total_reward: float
+    reached_goal: bool
+    epsilon_used: float
+
+
+@dataclass
+class TrainingResult:
+    """Result of RL training."""
+    episodes: list[Episode]
+    total_episodes: int
+    successful_episodes: int
+    average_reward: float
+    final_epsilon: float
+    converged: bool
+    
+    @property
+    def success_rate(self) -> float:
+        """Calculate success rate."""
+        return self.successful_episodes / self.total_episodes if self.total_episodes > 0 else 0.0
+
+
+@dataclass
+class PathfindingResult:
+    """Result of RL pathfinding operation."""
+    path: Optional[list[Coord]] = None
+    path_length: int = 0
+    total_reward: float = 0.0
+    steps_taken: int = 0
+    found: bool = False
+    training_episodes: int = 0
+    
+    @property
+    def success(self) -> bool:
+        """Whether pathfinding was successful."""
+        return self.found and self.path is not None and len(self.path) > 0
+
+
+# Action mappings
+ACTION_TO_INT: Dict[Action, ActionInt] = {
+    "up": 0,
+    "down": 1,
+    "left": 2,
+    "right": 3
+}
+
+INT_TO_ACTION: Dict[ActionInt, Action] = {
+    0: "up",
+    1: "down", 
+    2: "left",
+    3: "right"
+}
+
+ACTION_DELTAS: Dict[ActionInt, Coord] = {
+    0: (0, -1),  # up
+    1: (0, 1),   # down
+    2: (-1, 0),  # left
+    3: (1, 0)    # right
+}
