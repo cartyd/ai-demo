@@ -17,7 +17,8 @@ from .fsm import RLStateMachine, RLState
 class TrainingWorker(QObject):
     """Worker thread for RL training to avoid blocking UI."""
     
-    episode_completed = Signal(object)  # Episode
+    episode_completed = Signal(object)  # Episode (throttled)
+    progress_updated = Signal(int, int)  # current_episode, total_episodes
     training_finished = Signal(object)  # TrainingResult
     error_occurred = Signal(str)
     
@@ -29,11 +30,59 @@ class TrainingWorker(QObject):
         self.target = target
         self.episodes = episodes
         self.should_stop = False
+        self.is_paused = False
+        self.episode_update_interval = max(1, episodes // 100)  # Update UI ~100 times max
+        
+        # Early stopping tracking
+        self.successful_times = []  # Track times of successful episodes
+        self.no_improvement_count = 0
+        self.best_time = float('inf')
     
     def stop(self):
         """Stop training."""
         self.should_stop = True
     
+    def pause(self):
+        """Pause training."""
+        self.is_paused = True
+    
+    def resume(self):
+        """Resume training."""
+        self.is_paused = False
+    
+    def _should_stop_early(self, episode: Episode) -> tuple[bool, str]:
+        """Check if training should stop early due to convergence in performance."""
+        if not self.agent.config.enable_early_stopping:
+            return False, ""
+        
+        # Only consider successful episodes
+        if not episode.reached_goal or episode.elapsed_time <= 0:
+            return False, ""
+        
+        current_time = episode.elapsed_time
+        self.successful_times.append(current_time)
+        
+        # First successful episode sets the baseline
+        if len(self.successful_times) == 1:
+            self.best_time = current_time
+            return False, ""
+        
+        # Check if current time is an improvement
+        improvement_threshold = self.agent.config.min_improvement_threshold
+        if current_time < self.best_time * (1 - improvement_threshold):
+            # Significant improvement found
+            self.best_time = current_time
+            self.no_improvement_count = 0
+        else:
+            # No significant improvement
+            self.no_improvement_count += 1
+        
+        # Check if we've reached the patience limit
+        if self.no_improvement_count >= self.agent.config.early_stop_patience:
+            reason = f"No time improvement for {self.no_improvement_count} consecutive successful episodes (best: {self.best_time:.3f}s)"
+            return True, reason
+        
+        return False, ""
     def run(self):
         """Run training."""
         try:
@@ -45,8 +94,19 @@ class TrainingWorker(QObject):
             self.agent.training_phase = "training"
             episodes_list = []
             successful_episodes = 0
+            early_stopped = False
+            stopping_reason = ""
             
             for episode_num in range(self.episodes):
+                # Check for stop signal
+                if self.should_stop:
+                    break
+                
+                # Handle pause
+                while self.is_paused and not self.should_stop:
+                    import time
+                    time.sleep(0.1)  # Sleep briefly while paused
+                
                 if self.should_stop:
                     break
                     
@@ -55,22 +115,34 @@ class TrainingWorker(QObject):
                 
                 if episode.reached_goal:
                     successful_episodes += 1
+                    
+                    # Check for early stopping after successful episode
+                    should_stop, reason = self._should_stop_early(episode)
+                    if should_stop:
+                        early_stopped = True
+                        stopping_reason = reason
+                        self.agent.training_phase = "converged"
+                        break
                 
-                # Emit episode completed signal
-                self.episode_completed.emit(episode)
+                # Emit progress signal for every episode (lightweight)
+                self.progress_updated.emit(episode_num + 1, self.episodes)
+                
+                # Only emit detailed episode data occasionally to avoid overwhelming UI
+                if (episode_num + 1) % self.episode_update_interval == 0 or episode_num == self.episodes - 1:
+                    self.episode_completed.emit(episode)
             
             # Calculate final statistics
             total_reward = sum(ep.total_reward for ep in episodes_list)
             average_reward = total_reward / len(episodes_list) if episodes_list else 0.0
             
-            # Check convergence
-            converged = False
-            if len(episodes_list) >= 100:
+            # Check convergence (only if not already early stopped)
+            converged = early_stopped
+            if not early_stopped and len(episodes_list) >= 100:
                 recent_success = sum(1 for ep in episodes_list[-100:] if ep.reached_goal)
                 converged = recent_success >= 90
-            
-            if converged:
-                self.agent.training_phase = "converged"
+                if converged:
+                    self.agent.training_phase = "converged"
+                    stopping_reason = f"Converged with {recent_success}% success rate over last 100 episodes"
             
             result = TrainingResult(
                 episodes=episodes_list,
@@ -78,7 +150,9 @@ class TrainingWorker(QObject):
                 successful_episodes=successful_episodes,
                 average_reward=average_reward,
                 final_epsilon=self.agent.epsilon,
-                converged=converged
+                converged=converged,
+                early_stopped=early_stopped,
+                stopping_reason=stopping_reason
             )
             
             self.training_finished.emit(result)
@@ -103,6 +177,7 @@ class RLController(QObject):
     # Qt Signals
     state_changed = Signal(object)  # RLState
     episode_completed = Signal(object)  # Episode
+    training_progress = Signal(int, int)  # current_episode, total_episodes
     training_completed = Signal(object)  # TrainingResult
     testing_completed = Signal(object)  # PathfindingResult
     grid_updated = Signal()
@@ -131,12 +206,94 @@ class RLController(QObject):
         # Testing state
         self._current_test_path: Optional[List[Coord]] = None
         self._current_test_step = 0
+        self._testing_phase = "moving"  # "considering" or "moving"
+        
+        # Visual training state
+        self._visual_episodes_remaining = 0
+        self._visual_episode_active = False
+        self._visual_successful_times = []  # Track times for visual training early stopping
+        self._visual_no_improvement_count = 0
+        self._visual_best_time = float('inf')
         
         # Setup state machine callbacks
         self._setup_state_callbacks()
         
         # Initialize with a pre-generated maze for better demonstration
         self.generate_maze_grid(15, 15, seed=42)  # Fixed seed for consistent initial experience
+    
+    def _should_stop_visual_training_early(self, episode: Episode) -> tuple[bool, str]:
+        """Check if visual training should stop early due to time convergence."""
+        if not self._config.enable_early_stopping:
+            return False, ""
+        
+        # Only consider successful episodes
+        if not episode.reached_goal or episode.elapsed_time <= 0:
+            return False, ""
+        
+        current_time = episode.elapsed_time
+        self._visual_successful_times.append(current_time)
+        
+        # First successful episode sets the baseline
+        if len(self._visual_successful_times) == 1:
+            self._visual_best_time = current_time
+            return False, ""
+        
+        # Check if current time is an improvement
+        improvement_threshold = self._config.min_improvement_threshold
+        if current_time < self._visual_best_time * (1 - improvement_threshold):
+            # Significant improvement found
+            self._visual_best_time = current_time
+            self._visual_no_improvement_count = 0
+        else:
+            # No significant improvement
+            self._visual_no_improvement_count += 1
+        
+        # Check if we've reached the patience limit
+        if self._visual_no_improvement_count >= self._config.early_stop_patience:
+            reason = f"No time improvement for {self._visual_no_improvement_count} consecutive successful episodes (best: {self._visual_best_time:.3f}s)"
+            return True, reason
+        
+        return False, ""
+    
+    def _validate_training_data(self) -> tuple[bool, str]:
+        """Validate if agent has sufficient training data for reliable testing."""
+        episodes_completed = self._agent.episodes_completed
+        training_history = self._agent.training_history
+        
+        # Define minimum requirements
+        min_episodes = 50  # Minimum total episodes
+        min_successful = 10  # Minimum successful episodes
+        min_success_rate = 0.2  # Minimum 20% success rate
+        
+        # Check if any training has been done
+        if episodes_completed == 0:
+            return False, "No training completed yet. Click 'Train' to start learning before testing."
+        
+        # Check minimum episodes
+        if episodes_completed < min_episodes:
+            return False, f"Insufficient training data. Completed {episodes_completed} episodes, but need at least {min_episodes}. Run more training episodes."
+        
+        # Check successful episodes if we have training history
+        if training_history:
+            successful_episodes = sum(1 for ep in training_history if ep.reached_goal)
+            success_rate = successful_episodes / len(training_history)
+            
+            if successful_episodes < min_successful:
+                return False, f"Agent needs more successful training. Only {successful_episodes} successful episodes out of {len(training_history)}. Need at least {min_successful} successful episodes."
+            
+            if success_rate < min_success_rate:
+                return False, f"Agent success rate too low ({success_rate:.1%}). Need at least {min_success_rate:.1%} success rate. Try training longer or adjusting maze difficulty."
+            
+            # Check recent performance (last 20 episodes)
+            if len(training_history) >= 20:
+                recent_episodes = training_history[-20:]
+                recent_successes = sum(1 for ep in recent_episodes if ep.reached_goal)
+                recent_success_rate = recent_successes / len(recent_episodes)
+                
+                if recent_success_rate < 0.1:  # Less than 10% success in recent episodes
+                    return False, f"Agent performance has declined. Recent success rate: {recent_success_rate:.1%}. Consider more training or resetting the algorithm."
+        
+        return True, ""  # Validation passed
     
     def _setup_state_callbacks(self):
         """Setup callbacks for state machine transitions."""
@@ -287,12 +444,19 @@ class RLController(QObject):
                 self._target_coord is not None)
     
     def start_training(self, episodes: int = None) -> bool:
-        """Start RL training."""
+        """Start RL training (background or visual based on config)."""
         if not self.can_start_training():
             return False
         
         episodes = episodes or self._config.max_episodes
         
+        if self._config.training_mode == "visual":
+            return self._start_visual_training(episodes)
+        else:
+            return self._start_background_training(episodes)
+    
+    def _start_background_training(self, episodes: int) -> bool:
+        """Start background training in worker thread."""
         try:
             # Create worker thread for training
             self._training_thread = QThread()
@@ -303,6 +467,7 @@ class RLController(QObject):
             
             # Connect signals
             self._training_worker.episode_completed.connect(self._on_episode_completed)
+            self._training_worker.progress_updated.connect(self._on_progress_updated)
             self._training_worker.training_finished.connect(self._on_training_finished)
             self._training_worker.error_occurred.connect(self._on_training_error)
             self._training_thread.started.connect(self._training_worker.run)
@@ -314,41 +479,160 @@ class RLController(QObject):
             return True
             
         except Exception as e:
-            self.error_occurred.emit(f"Failed to start training: {str(e)}")
+            self.error_occurred.emit(f"Failed to start background training: {str(e)}")
             return False
+    
+    def _start_visual_training(self, episodes: int) -> bool:
+        """Start visual training with step-by-step visualization."""
+        try:
+            self._visual_episodes_remaining = episodes
+            self._visual_episode_active = False
+            
+            # Reset early stopping state
+            self._visual_successful_times = []
+            self._visual_no_improvement_count = 0
+            self._visual_best_time = float('inf')
+            
+            # Reset grid states
+            if self._grid:
+                self._grid.reset_q_values()
+                self._grid.reset_visualization_states()
+            
+            # Start first episode
+            self._state_machine.start_training()
+            self._start_next_visual_episode()
+            
+            return True
+            
+        except Exception as e:
+            self.error_occurred.emit(f"Failed to start visual training: {str(e)}")
+            return False
+    
+    def _start_next_visual_episode(self):
+        """Start the next visual training episode."""
+        if self._visual_episodes_remaining <= 0:
+            self._complete_visual_training()
+            return
+        
+        # Start new episode
+        if self._agent.start_visual_episode(self._grid, self._start_coord, self._target_coord):
+            self._visual_episode_active = True
+            self._visual_episodes_remaining -= 1
+            
+            # Start timer for step progression
+            self._timer.setInterval(self._config.visual_step_delay)
+            self._timer.start()
+            
+            self.grid_updated.emit()
+        else:
+            self.error_occurred.emit("Failed to start visual episode")
+    
+    def _complete_visual_training(self, early_stopped: bool = False, stopping_reason: str = ""):
+        """Complete visual training and emit results."""
+        # Calculate training results
+        episodes = self._agent.training_history
+        successful_episodes = sum(1 for ep in episodes if ep.reached_goal)
+        total_reward = sum(ep.total_reward for ep in episodes)
+        average_reward = total_reward / len(episodes) if episodes else 0.0
+        
+        # Check convergence (only if not already early stopped)
+        converged = early_stopped
+        if not early_stopped and len(episodes) >= 100:
+            recent_success = sum(1 for ep in episodes[-100:] if ep.reached_goal)
+            converged = recent_success >= 90
+            if converged:
+                stopping_reason = f"Converged with {recent_success}% success rate over last 100 episodes"
+        
+        if converged:
+            self._agent.training_phase = "converged"
+            self._state_machine.converge()
+        else:
+            self._state_machine.reset_to_idle()
+        
+        result = TrainingResult(
+            episodes=episodes,
+            total_episodes=len(episodes),
+            successful_episodes=successful_episodes,
+            average_reward=average_reward,
+            final_epsilon=self._agent.epsilon,
+            converged=converged,
+            early_stopped=early_stopped,
+            stopping_reason=stopping_reason
+        )
+        
+        self._timer.stop()
+        self._visual_episode_active = False
+        self.training_completed.emit(result)
+        self.grid_updated.emit()
     
     def pause_training(self) -> bool:
         """Pause training."""
-        if self._training_worker:
-            self._training_worker.stop()
+        if self._config.training_mode == "background" and self._training_worker:
+            self._training_worker.pause()
+        elif self._config.training_mode == "visual":
+            self._timer.stop()
         return self._state_machine.pause()
     
     def resume_training(self) -> bool:
         """Resume training."""
-        # For simplicity, just restart training from current state
+        if self._config.training_mode == "background" and self._training_worker:
+            self._training_worker.resume()
+        elif self._config.training_mode == "visual" and self._visual_episode_active:
+            self._timer.start(self._config.visual_step_delay)
         return self._state_machine.resume()
+    
+    def stop_training(self) -> bool:
+        """Stop training completely."""
+        if self._training_worker:
+            self._training_worker.stop()
+        if self._config.training_mode == "visual":
+            self._timer.stop()
+            self._visual_episode_active = False
+        return self._state_machine.reset_to_idle()
     
     def start_testing(self) -> bool:
         """Start testing the learned policy."""
         if not self.can_start_training():
             return False
         
+        # Check if agent has sufficient training data
+        validation_result = self._validate_training_data()
+        if not validation_result[0]:
+            self.error_occurred.emit(validation_result[1])
+            return False
+        
         try:
+            # Clear any previous visualization states
+            if self._grid:
+                self._grid.reset_visualization_states()
+            
+            # Reset testing state
+            self._current_test_path = None
+            self._current_test_step = 0
+            self._testing_phase = "moving"
+            
             # Find path using learned policy
             result = self._agent.find_path(self._grid, self._start_coord, self._target_coord)
             
             if result.success:
                 self._current_test_path = result.path
                 self._current_test_step = 0
-                self._state_machine.start_testing()
+                
+                # Transition to testing state
+                if not self._state_machine.start_testing():
+                    self.error_occurred.emit("Could not transition to testing state")
+                    return False
                 
                 # Start timer for step-by-step visualization
                 if not self._config.step_mode:
                     self._timer.start(self._timer_interval)
+                    
+                # Emit initial grid update to show clean state
+                self.grid_updated.emit()
                 
                 return True
             else:
-                self.error_occurred.emit("Agent could not find path. Training may be insufficient.")
+                self.error_occurred.emit(f"Agent could not find path. Training may be insufficient. Path length: {result.path_length}, Episodes: {result.training_episodes}")
                 return False
                 
         except Exception as e:
@@ -356,24 +640,44 @@ class RLController(QObject):
             return False
     
     def step_testing(self) -> bool:
-        """Execute one step of testing."""
-        if not self._state_machine.is_testing() or not self._current_test_path:
+        """Execute one step of testing with decision visualization."""
+        if not self._state_machine.is_testing():
+            return False
+            
+        if not self._current_test_path:
+            self.error_occurred.emit("No test path available")
             return False
         
         try:
             if self._current_test_step < len(self._current_test_path):
-                # Update visualization
                 coord = self._current_test_path[self._current_test_step]
-                if coord != self._start_coord and coord != self._target_coord:
-                    self._grid.set_node_state(coord, "current")
                 
-                self._current_test_step += 1
+                if self._testing_phase == "moving":
+                    # First show decision consideration
+                    if self._current_test_step < len(self._current_test_path) - 1:
+                        self._show_decision_process(coord)
+                        self._testing_phase = "considering"
+                    else:
+                        # Final step, just move
+                        self._move_to_position(coord)
+                        self._current_test_step += 1
+                        
+                        if self._current_test_step >= len(self._current_test_path):
+                            self._complete_testing()
+                    
+                elif self._testing_phase == "considering":
+                    # Now actually move to the position
+                    self._clear_decision_highlights()
+                    self._move_to_position(coord)
+                    self._current_test_step += 1
+                    self._testing_phase = "moving"
+                    
+                    if self._current_test_step >= len(self._current_test_path):
+                        self._complete_testing()
+                        return True  # Return early since testing is complete
+                
+                # Always emit grid update to ensure UI refreshes
                 self.grid_updated.emit()
-                
-                # Check if testing is complete
-                if self._current_test_step >= len(self._current_test_path):
-                    self._complete_testing()
-                
                 return True
             else:
                 self._complete_testing()
@@ -383,13 +687,53 @@ class RLController(QObject):
             self.error_occurred.emit(f"Testing error: {str(e)}")
             return False
     
+    def _show_decision_process(self, current_coord: Coord):
+        """Show the decision process by highlighting possible moves."""
+        from ..domain.types import ACTION_DELTAS
+        
+        # Get valid actions from current position
+        valid_actions = []
+        for action in range(4):
+            delta = ACTION_DELTAS[action]
+            next_pos = (current_coord[0] + delta[0], current_coord[1] + delta[1])
+            
+            if (self._grid.is_valid_coord(next_pos) and 
+                self._grid.get_node(next_pos) and 
+                self._grid.get_node(next_pos).is_passable()):
+                valid_actions.append((action, next_pos))
+        
+        # Highlight possible moves and show Q-values
+        for action, next_pos in valid_actions:
+            if next_pos != self._start_coord and next_pos != self._target_coord:
+                node = self._grid.get_node(next_pos)
+                if node and node.state not in ["current", "path", "optimal_path"]:
+                    self._grid.set_node_state(next_pos, "training_considering")
+    
+    def _clear_decision_highlights(self):
+        """Clear decision process highlights."""
+        for node in self._grid.nodes.values():
+            if node.state == "training_considering":
+                node.state = "empty"
+    
+    def _move_to_position(self, coord: Coord):
+        """Move to a position and update visualization."""
+        if coord != self._start_coord and coord != self._target_coord:
+            self._grid.set_node_state(coord, "current")
+    
     def _complete_testing(self):
         """Complete testing and show final path."""
+        # Clear any decision highlights
+        self._clear_decision_highlights()
+        
         if self._current_test_path:
-            # Mark entire path
+            # Check if validation criteria are met to determine path highlighting
+            validation_result = self._validate_training_data()
+            path_state = "optimal_path" if validation_result[0] else "path"
+            
+            # Mark entire path with appropriate state
             for coord in self._current_test_path:
                 if coord != self._start_coord and coord != self._target_coord:
-                    self._grid.set_node_state(coord, "path")
+                    self._grid.set_node_state(coord, path_state)
             
             result = PathfindingResult(
                 path=self._current_test_path,
@@ -401,6 +745,7 @@ class RLController(QObject):
             self.testing_completed.emit(result)
         
         self._timer.stop()
+        self._testing_phase = "moving"
         self._state_machine.reset_to_idle()
         self.grid_updated.emit()
     
@@ -417,11 +762,30 @@ class RLController(QObject):
             self._grid.reset_visualization_states()
             self._grid.reset_q_values()
         
+        # Reset testing state
         self._current_test_path = None
         self._current_test_step = 0
+        self._testing_phase = "moving"
+        
+        # Reset visual training state
+        self._visual_episodes_remaining = 0
+        self._visual_episode_active = False
+        self._visual_successful_times = []
+        self._visual_no_improvement_count = 0
+        self._visual_best_time = float('inf')
         
         self.grid_updated.emit()
         return self._state_machine.reset_to_idle()
+    
+    def step_visual_training(self) -> bool:
+        """Manually execute one step of visual training (for step mode)."""
+        if (not self._state_machine.is_training() or 
+            self._config.training_mode != "visual" or 
+            not self._visual_episode_active):
+            return False
+        
+        self._step_visual_training()
+        return True
     
     # Configuration
     
@@ -463,10 +827,49 @@ class RLController(QObject):
         self._timer.stop()
         self.state_changed.emit(RLState.ERROR)
     
+    def _step_visual_training(self):
+        """Execute one step of visual training."""
+        if not self._visual_episode_active:
+            return
+        
+        try:
+            episode_done, episode = self._agent.step_visual_training()
+            
+            if episode_done:
+                # Episode finished
+                if episode:
+                    self.episode_completed.emit(episode)
+                    
+                    # Check for early stopping after successful episode
+                    if episode.reached_goal:
+                        should_stop, reason = self._should_stop_visual_training_early(episode)
+                        if should_stop:
+                            # Stop visual training early
+                            self._complete_visual_training(early_stopped=True, stopping_reason=reason)
+                            return
+                
+                # Delay before starting next episode
+                self._visual_episode_active = False
+                self._timer.setInterval(self._config.visual_episode_delay)
+                self._timer.singleShot(self._config.visual_episode_delay, self._start_next_visual_episode)
+            
+            self.grid_updated.emit()
+            
+        except Exception as e:
+            self.error_occurred.emit(f"Visual training error: {str(e)}")
+    
     def _on_timer_tick(self):
-        """Called on each timer tick during testing."""
-        if self._state_machine.is_testing():
-            self.step_testing()
+        """Called on each timer tick during testing or visual training."""
+        try:
+            if self._state_machine.is_testing():
+                if not self.step_testing():
+                    # If step_testing returns False, stop the timer
+                    self._timer.stop()
+            elif self._state_machine.is_training() and self._config.training_mode == "visual":
+                self._step_visual_training()
+        except Exception as e:
+            self.error_occurred.emit(f"Timer tick error: {str(e)}")
+            self._timer.stop()
     
     # Training callbacks
     
@@ -474,6 +877,10 @@ class RLController(QObject):
         """Called when a training episode is completed."""
         self.episode_completed.emit(episode)
         self.grid_updated.emit()  # Update Q-value visualization
+    
+    def _on_progress_updated(self, current_episode: int, total_episodes: int):
+        """Called when training progress is updated."""
+        self.training_progress.emit(current_episode, total_episodes)
     
     def _on_training_finished(self, result: TrainingResult):
         """Called when training is finished."""
@@ -493,11 +900,61 @@ class RLController(QObject):
     def _cleanup_training_thread(self):
         """Clean up training thread."""
         if self._training_thread:
+            if self._training_thread.isRunning():
+                self._training_thread.quit()
+                self._training_thread.wait(1000)  # Wait up to 1 second
             self._training_thread.deleteLater()
             self._training_thread = None
         if self._training_worker:
             self._training_worker.deleteLater()
             self._training_worker = None
+    
+    def cleanup(self):
+        """Clean up all resources before application shutdown."""
+        try:
+            # Stop timer first (catch Qt internal object deletion)
+            try:
+                if hasattr(self, '_timer') and self._timer is not None:
+                    self._timer.stop()
+            except RuntimeError:
+                pass  # Qt object already deleted
+            
+            # Stop and cleanup training worker/thread
+            try:
+                if hasattr(self, '_training_worker') and self._training_worker:
+                    self._training_worker.stop()
+            except RuntimeError:
+                pass  # Qt object already deleted
+            
+            try:
+                if hasattr(self, '_training_thread') and self._training_thread:
+                    if self._training_thread.isRunning():
+                        self._training_thread.quit()
+                        # Give it more time to clean up properly
+                        if not self._training_thread.wait(3000):  # Wait up to 3 seconds
+                            self._training_thread.terminate()
+                            self._training_thread.wait(1000)  # Wait for termination
+                    
+                    # Clean up thread objects
+                    self._training_thread.deleteLater()
+                    self._training_thread = None
+            except RuntimeError:
+                pass  # Qt object already deleted
+            
+            try:
+                if hasattr(self, '_training_worker') and self._training_worker:
+                    self._training_worker.deleteLater()
+                    self._training_worker = None
+            except RuntimeError:
+                pass  # Qt object already deleted
+                
+        except Exception as e:
+            # Suppress cleanup warnings during shutdown
+            pass
+    
+    def __del__(self):
+        """Destructor to ensure proper cleanup."""
+        self.cleanup()
     
     # Utility methods
     

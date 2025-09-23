@@ -87,6 +87,11 @@ class GridTile(QGraphicsRectItem):
             "visited": (QColor(200, 200, 255), QColor(150, 150, 200)),
             "current": (QColor(255, 255, 100), QColor(200, 200, 50)),
             "path": (QColor(255, 200, 100), QColor(200, 150, 50)),
+            "optimal_path": (QColor(255, 255, 100), QColor(200, 200, 50)),  # Yellow for validated optimal path
+            # Training visualization states
+            "training_current": (QColor(255, 150, 255), QColor(200, 100, 200)),  # Magenta for current training position
+            "training_visited": (QColor(220, 180, 255), QColor(170, 130, 200)),  # Light purple for visited during training
+            "training_considering": (QColor(255, 220, 150), QColor(200, 170, 100)),  # Light orange for considering moves
         }
         
         # Q-value visualization colors (for empty tiles)
@@ -124,7 +129,7 @@ class GridTile(QGraphicsRectItem):
     
     def _update_q_value_display(self):
         """Update Q-value text display."""
-        if self.show_q_values and self.node.state in ["empty", "start", "target"]:
+        if self.show_q_values and self.node.state in ["empty", "start", "target", "path", "optimal_path"]:
             q_values = self.node.q_values
             
             # Display Q-values for each action

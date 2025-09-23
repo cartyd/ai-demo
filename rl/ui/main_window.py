@@ -1,12 +1,13 @@
 """Main window for RL pathfinding visualizer."""
 
+import time
 from PySide6.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton,
     QLabel, QSlider, QComboBox, QCheckBox, QSpinBox, QButtonGroup,
     QRadioButton, QStatusBar, QGroupBox, QTextEdit, QFrame, QProgressBar
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QKeySequence, QShortcut, QColor, QPalette
+from PySide6.QtGui import QKeySequence, QShortcut, QColor, QPalette, QCloseEvent
 
 from ..app.controller import RLController
 from ..app.fsm import RLState
@@ -27,6 +28,13 @@ class MainWindow(QMainWindow):
         self.training_start_time = None
         self.current_episode = 0
         self.total_episodes = 0
+        self.current_episode_start_time = None  # Track current episode start time
+        
+        # Timer for updating elapsed time
+        self.elapsed_timer = QTimer()
+        self.elapsed_timer.timeout.connect(self._update_elapsed_time)
+        self.elapsed_timer.timeout.connect(self._update_episode_timing_display)  # Also update episode timing
+        self.elapsed_timer.setInterval(1000)  # Update every second
         
         # Create UI
         self._create_ui()
@@ -73,15 +81,53 @@ class MainWindow(QMainWindow):
         
         # RL controls
         rl_group = QGroupBox("Q-Learning")
-        rl_layout = QHBoxLayout(rl_group)
+        rl_layout = QVBoxLayout(rl_group)
         
+        # Training mode selection
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Training Mode:"))
+        
+        self.mode_button_group = QButtonGroup()
+        self.background_radio = QRadioButton("Background")
+        self.visual_radio = QRadioButton("Visual")
+        self.background_radio.setChecked(True)
+        
+        self.mode_button_group.addButton(self.background_radio)
+        self.mode_button_group.addButton(self.visual_radio)
+        
+        mode_layout.addWidget(self.background_radio)
+        mode_layout.addWidget(self.visual_radio)
+        mode_layout.addStretch()
+        rl_layout.addLayout(mode_layout)
+        
+        # Speed control for visual mode
+        speed_layout = QHBoxLayout()
+        speed_layout.addWidget(QLabel("Speed:"))
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setRange(50, 1000)  # 50ms to 1000ms
+        self.speed_slider.setValue(300)  # Default 300ms
+        self.speed_slider.setEnabled(False)  # Disabled for background mode initially
+        speed_layout.addWidget(self.speed_slider)
+        
+        self.speed_label = QLabel("300ms")
+        self.speed_label.setMinimumWidth(50)
+        speed_layout.addWidget(self.speed_label)
+        rl_layout.addLayout(speed_layout)
+        
+        # Action buttons
+        buttons_layout = QHBoxLayout()
         self.train_btn = QPushButton("Train")
         self.test_btn = QPushButton("Test")
+        self.step_btn = QPushButton("Step")
         self.pause_btn = QPushButton("Pause")
         self.reset_btn = QPushButton("Reset")
         
-        for btn in [self.train_btn, self.test_btn, self.pause_btn, self.reset_btn]:
-            rl_layout.addWidget(btn)
+        self.step_btn.setEnabled(False)  # Initially disabled
+        
+        for btn in [self.train_btn, self.test_btn, self.step_btn, self.pause_btn, self.reset_btn]:
+            buttons_layout.addWidget(btn)
+        
+        rl_layout.addLayout(buttons_layout)
         
         # Episodes control
         episodes_layout = QVBoxLayout()
@@ -163,6 +209,25 @@ class MainWindow(QMainWindow):
         self.show_costs_cb = QCheckBox("Show Costs")
         viz_layout.addWidget(self.show_costs_cb)
         
+        # Smart AI options
+        smart_group = QGroupBox("Smart AI")
+        smart_layout = QVBoxLayout(smart_group)
+        
+        self.smart_rewards_cb = QCheckBox("Smart Rewards")
+        self.smart_rewards_cb.setChecked(True)
+        self.smart_rewards_cb.setToolTip("Enable distance guidance, exploration bonuses, and dead-end penalties")
+        smart_layout.addWidget(self.smart_rewards_cb)
+        
+        self.dead_end_detection_cb = QCheckBox("Dead-End Detection")
+        self.dead_end_detection_cb.setChecked(True)
+        self.dead_end_detection_cb.setToolTip("Avoid dead ends during exploration and exploitation")
+        smart_layout.addWidget(self.dead_end_detection_cb)
+        
+        self.distance_guidance_cb = QCheckBox("Distance Guidance")
+        self.distance_guidance_cb.setChecked(True)
+        self.distance_guidance_cb.setToolTip("Bias actions toward goal direction")
+        smart_layout.addWidget(self.distance_guidance_cb)
+        
         # Add all groups to main layout
         layout.addWidget(rl_group)
         layout.addLayout(episodes_layout)
@@ -170,6 +235,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(edit_group)
         layout.addWidget(params_group)
         layout.addWidget(viz_group)
+        layout.addWidget(smart_group)
         layout.addStretch()
         
         return layout
@@ -179,10 +245,37 @@ class MainWindow(QMainWindow):
         stats_group = QGroupBox("Training Statistics")
         stats_layout = QVBoxLayout(stats_group)
         
+        # Progress section
+        progress_group = QGroupBox("Training Progress")
+        progress_layout = QVBoxLayout(progress_group)
+        
         # Progress bar
         self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        stats_layout.addWidget(self.progress_bar)
+        progress_layout.addWidget(self.progress_bar)
+        
+        # Progress info layout
+        progress_info_layout = QHBoxLayout()
+        
+        # Elapsed time
+        self.elapsed_time_label = QLabel("Elapsed: 00:00")
+        progress_info_layout.addWidget(self.elapsed_time_label)
+        
+        # Episodes per second
+        self.eps_label = QLabel("Rate: 0 eps/s")
+        progress_info_layout.addWidget(self.eps_label)
+        
+        # Estimated time remaining
+        self.eta_label = QLabel("ETA: --:--")
+        progress_info_layout.addWidget(self.eta_label)
+        
+        progress_info_layout.addStretch()
+        progress_layout.addLayout(progress_info_layout)
+        
+        # Initially hide the entire progress section
+        progress_group.setVisible(False)
+        self.progress_group = progress_group  # Store reference
+        
+        stats_layout.addWidget(progress_group)
         
         # Statistics display
         self.stats_display = QTextEdit()
@@ -196,8 +289,48 @@ class MainWindow(QMainWindow):
         self.success_rate_label = QLabel("Success Rate: 0%")
         self.epsilon_label = QLabel("Epsilon: 0.10")
         
+        # Episode timing labels
+        self.current_episode_time_label = QLabel("Current Episode: --:--")
+        self.best_episode_time_label = QLabel("Best Time: --:--")
+        self.worst_episode_time_label = QLabel("Worst Time: --:--")
+        self.avg_episode_time_label = QLabel("Avg Time: --:--")
+        
+        # Training readiness status
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        stats_layout.addWidget(separator)
+        
+        training_status_group = QGroupBox("Training Status")
+        training_status_layout = QVBoxLayout(training_status_group)
+        
+        # Training readiness indicator
+        readiness_layout = QHBoxLayout()
+        self.training_status_indicator = QLabel()
+        self.training_status_indicator.setMaximumSize(20, 20)
+        self.training_status_indicator.setMinimumSize(20, 20)
+        self.training_status_indicator.setStyleSheet("background-color: #FF6464; border: 2px solid #000; border-radius: 10px;")
+        readiness_layout.addWidget(self.training_status_indicator)
+        
+        self.training_readiness_label = QLabel("Not Ready for Testing")
+        readiness_layout.addWidget(self.training_readiness_label)
+        readiness_layout.addStretch()
+        training_status_layout.addLayout(readiness_layout)
+        
+        # Training progress indicators
+        self.episodes_progress_label = QLabel("Episodes: 0/50 needed")
+        self.success_progress_label = QLabel("Successful: 0/10 needed")
+        self.success_rate_progress_label = QLabel("Success Rate: 0%/20% needed")
+        
+        for label in [self.episodes_progress_label, self.success_progress_label, self.success_rate_progress_label]:
+            training_status_layout.addWidget(label)
+        
+        stats_layout.addWidget(training_status_group)
+        
         for label in [self.current_state_label, self.episodes_label, 
-                     self.success_rate_label, self.epsilon_label]:
+                     self.success_rate_label, self.epsilon_label,
+                     self.current_episode_time_label, self.best_episode_time_label,
+                     self.worst_episode_time_label, self.avg_episode_time_label]:
             stats_layout.addWidget(label)
         
         # Color legend
@@ -216,7 +349,11 @@ class MainWindow(QMainWindow):
             ("Target (Cheese)", "#FF6464"),
             ("Wall", "#3C3C3C"),
             ("Current", "#FFFF64"),
-            ("Path", "#FFC864"),
+            ("Path (Insufficient Training)", "#FFC864"),
+            ("Optimal Path (Validated)", "#FFFF64"),  # Yellow for validated training
+            ("Training Current", "#FF96FF"),  # Magenta
+            ("Training Visited", "#DCB4FF"),  # Light purple
+            ("Training Consider", "#FFDC96"),  # Light orange
             ("High Q-Value", "#C8FFC8"),
             ("Low Q-Value", "#FFC8C8")
         ]
@@ -236,11 +373,59 @@ class MainWindow(QMainWindow):
         
         return legend_group
     
+    def _get_training_status(self) -> dict:
+        """Get training status information for UI display."""
+        # Call controller's validation method
+        is_valid, message = self.controller._validate_training_data()
+        
+        # Get training statistics
+        agent = self.controller.agent
+        episodes_completed = agent.episodes_completed
+        training_history = agent.training_history
+        
+        # Calculate current progress
+        successful_episodes = sum(1 for ep in training_history if ep.reached_goal) if training_history else 0
+        success_rate = successful_episodes / len(training_history) if training_history else 0.0
+        
+        # Define thresholds (matching controller validation)
+        min_episodes = 50
+        min_successful = 10
+        min_success_rate = 0.2
+        
+        # Determine status level
+        if is_valid:
+            status_level = "ready"
+            status_color = "#64FF64"  # Green
+            status_text = "Ready for Testing"
+        elif episodes_completed >= min_episodes / 2 or successful_episodes >= min_successful / 2:
+            status_level = "partial"
+            status_color = "#FFC864"  # Orange/Yellow
+            status_text = "Partially Trained"
+        else:
+            status_level = "insufficient"
+            status_color = "#FF6464"  # Red
+            status_text = "Insufficient Training"
+        
+        return {
+            "is_ready": is_valid,
+            "message": message,
+            "status_level": status_level,
+            "status_color": status_color,
+            "status_text": status_text,
+            "episodes_completed": episodes_completed,
+            "episodes_needed": min_episodes,
+            "successful_episodes": successful_episodes,
+            "successful_needed": min_successful,
+            "success_rate": success_rate,
+            "success_rate_needed": min_success_rate
+        }
+    
     def _setup_connections(self):
         """Setup signal connections."""
         # Controller signals
         self.controller.state_changed.connect(self._on_state_changed)
         self.controller.episode_completed.connect(self._on_episode_completed)
+        self.controller.training_progress.connect(self._on_training_progress)
         self.controller.training_completed.connect(self._on_training_completed)
         self.controller.testing_completed.connect(self._on_testing_completed)
         self.controller.grid_updated.connect(self._on_grid_updated)
@@ -249,6 +434,7 @@ class MainWindow(QMainWindow):
         # Button connections
         self.train_btn.clicked.connect(self._on_train_clicked)
         self.test_btn.clicked.connect(self._on_test_clicked)
+        self.step_btn.clicked.connect(self._on_step_clicked)
         self.pause_btn.clicked.connect(self._on_pause_clicked)
         self.reset_btn.clicked.connect(self._on_reset_clicked)
         
@@ -267,6 +453,18 @@ class MainWindow(QMainWindow):
         self.wall_radio.toggled.connect(lambda: self.grid_view.set_edit_mode("wall"))
         self.start_radio.toggled.connect(lambda: self.grid_view.set_edit_mode("start"))
         self.target_radio.toggled.connect(lambda: self.grid_view.set_edit_mode("target"))
+        
+        # Training mode
+        self.background_radio.toggled.connect(self._on_training_mode_changed)
+        self.visual_radio.toggled.connect(self._on_training_mode_changed)
+        
+        # Speed control
+        self.speed_slider.valueChanged.connect(self._on_speed_changed)
+        
+        # Smart AI controls
+        self.smart_rewards_cb.toggled.connect(self._on_smart_ai_changed)
+        self.dead_end_detection_cb.toggled.connect(self._on_smart_ai_changed)
+        self.distance_guidance_cb.toggled.connect(self._on_smart_ai_changed)
     
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts."""
@@ -281,28 +479,62 @@ class MainWindow(QMainWindow):
         self._update_statistics_display()
         
         if state == RLState.TRAINING:
-            self.progress_bar.setVisible(True)
+            if self.training_start_time is None:
+                self.training_start_time = time.time()
+            self.progress_group.setVisible(True)
             self.progress_bar.setMaximum(self.episodes_spin.value())
             self.progress_bar.setValue(0)
+            self.elapsed_timer.start()
+            self._update_elapsed_time()  # Initial update
+            self._update_training_rate()  # Initial rate update
+        elif state == RLState.PAUSED:
+            # Keep the elapsed timer running during pause so we can see total time
+            pass
         else:
-            self.progress_bar.setVisible(False)
+            if state in [RLState.IDLE, RLState.CONVERGED]:
+                self.progress_group.setVisible(False)
+                self.training_start_time = None
+            self.elapsed_timer.stop()
     
     def _on_episode_completed(self, episode):
         """Handle episode completion."""
         self.current_episode = episode.number + 1
         self.progress_bar.setValue(self.current_episode)
         self._update_statistics_display()
+        self._update_training_rate()
+        
+        # Reset episode start time for next episode
+        self.current_episode_start_time = time.time()
+    
+    def _on_training_progress(self, current_episode: int, total_episodes: int):
+        """Handle training progress updates."""
+        self.current_episode = current_episode
+        self.total_episodes = total_episodes
+        self.progress_bar.setValue(current_episode)
+        if self.progress_bar.maximum() != total_episodes:
+            self.progress_bar.setMaximum(total_episodes)
+        self._update_training_rate()
     
     def _on_training_completed(self, result):
         """Handle training completion."""
-        self.progress_bar.setVisible(False)
+        self.progress_group.setVisible(False)
         self._update_statistics_display()
         
-        # Show completion message
-        if result.converged:
-            self.status_bar.showMessage(f"Training converged! Success rate: {result.success_rate:.1%}")
+        # Calculate elapsed time for completion message
+        elapsed_time = ""
+        if self.training_start_time is not None:
+            elapsed = time.time() - self.training_start_time
+            minutes = int(elapsed // 60)
+            seconds = int(elapsed % 60)
+            elapsed_time = f" in {minutes}m {seconds}s"
+        
+        # Show completion message with statistics
+        if result.early_stopped:
+            self.status_bar.showMessage(f"Training stopped early{elapsed_time}! {result.stopping_reason} | Success rate: {result.success_rate:.1%} ({result.successful_episodes}/{result.total_episodes})")
+        elif result.converged:
+            self.status_bar.showMessage(f"Training converged{elapsed_time}! Success rate: {result.success_rate:.1%} ({result.successful_episodes}/{result.total_episodes})")
         else:
-            self.status_bar.showMessage(f"Training completed. Success rate: {result.success_rate:.1%}")
+            self.status_bar.showMessage(f"Training completed{elapsed_time}. Success rate: {result.success_rate:.1%} ({result.successful_episodes}/{result.total_episodes})")
     
     def _on_testing_completed(self, result):
         """Handle testing completion."""
@@ -325,11 +557,20 @@ class MainWindow(QMainWindow):
         episodes = self.episodes_spin.value()
         self.total_episodes = episodes
         self.current_episode = 0
+        self.training_start_time = time.time()  # Reset start time
+        self.current_episode_start_time = time.time()  # Reset episode start time
         self.controller.start_training(episodes)
     
     def _on_test_clicked(self):
         """Handle test button click."""
         self.controller.start_testing()
+    
+    def _on_step_clicked(self):
+        """Handle step button click."""
+        if self.controller.current_state == RLState.TRAINING:
+            self.controller.step_visual_training()
+        elif self.controller.current_state == RLState.TESTING:
+            self.controller.step_testing()
     
     def _on_pause_clicked(self):
         """Handle pause button click."""
@@ -340,9 +581,18 @@ class MainWindow(QMainWindow):
     
     def _on_reset_clicked(self):
         """Handle reset button click."""
+        # Stop any ongoing training first
+        if self.controller.current_state in [RLState.TRAINING, RLState.PAUSED]:
+            self.controller.stop_training()
+        
         self.controller.reset_algorithm()
         self.current_episode = 0
         self.total_episodes = 0
+        self.training_start_time = None
+        self.current_episode_start_time = None
+        self.elapsed_timer.stop()
+        self._update_elapsed_time()
+        self._update_episode_timing_display()
     
     def _on_new_grid_clicked(self):
         """Handle new grid button click."""
@@ -359,13 +609,135 @@ class MainWindow(QMainWindow):
     
     def _on_params_changed(self):
         """Handle parameter changes."""
-        learning_rate = self.lr_spin.value() / 100.0
-        epsilon = self.eps_spin.value() / 100.0
-        
+        # Update controller config
         self.controller.update_config(
-            learning_rate=learning_rate,
-            epsilon=epsilon
+            learning_rate=self.lr_spin.value() / 100.0,
+            epsilon=self.eps_spin.value() / 100.0
         )
+    
+    def _on_training_mode_changed(self):
+        """Handle training mode change."""
+        if self.visual_radio.isChecked():
+            mode = "visual"
+            self.speed_slider.setEnabled(True)
+        else:
+            mode = "background"
+            self.speed_slider.setEnabled(False)
+        
+        self.controller.update_config(training_mode=mode)
+        self._update_button_states()
+    
+    def _on_speed_changed(self, value: int):
+        """Handle speed slider change."""
+        self.speed_label.setText(f"{value}ms")
+        self.controller.update_config(visual_step_delay=value)
+    
+    def _on_smart_ai_changed(self):
+        """Handle smart AI settings change."""
+        self.controller.update_config(
+            use_smart_rewards=self.smart_rewards_cb.isChecked(),
+            detect_dead_ends=self.dead_end_detection_cb.isChecked(),
+            use_distance_guidance=self.distance_guidance_cb.isChecked()
+        )
+    
+    def _update_elapsed_time(self):
+        """Update the elapsed time display."""
+        if self.training_start_time is not None:
+            elapsed = time.time() - self.training_start_time
+            hours = int(elapsed // 3600)
+            minutes = int((elapsed % 3600) // 60)
+            seconds = int(elapsed % 60)
+            
+            if hours > 0:
+                time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            else:
+                time_str = f"{minutes:02d}:{seconds:02d}"
+            
+            self.elapsed_time_label.setText(f"Elapsed: {time_str}")
+        else:
+            self.elapsed_time_label.setText("Elapsed: 00:00")
+    
+    def _update_training_rate(self):
+        """Update the training rate and ETA display."""
+        if self.training_start_time is not None and self.current_episode > 0:
+            elapsed = time.time() - self.training_start_time
+            if elapsed > 0:
+                rate = self.current_episode / elapsed
+                if rate >= 10:
+                    self.eps_label.setText(f"Rate: {rate:.0f} eps/s")
+                elif rate >= 1:
+                    self.eps_label.setText(f"Rate: {rate:.1f} eps/s")
+                else:
+                    self.eps_label.setText(f"Rate: {rate:.2f} eps/s")
+                
+                # Calculate ETA
+                remaining_episodes = self.total_episodes - self.current_episode
+                if rate > 0 and remaining_episodes > 0:
+                    eta_seconds = remaining_episodes / rate
+                    eta_minutes = int(eta_seconds // 60)
+                    eta_seconds = int(eta_seconds % 60)
+                    
+                    if eta_minutes >= 60:
+                        eta_hours = int(eta_minutes // 60)
+                        eta_minutes = int(eta_minutes % 60)
+                        self.eta_label.setText(f"ETA: {eta_hours:02d}:{eta_minutes:02d}:{eta_seconds:02d}")
+                    else:
+                        self.eta_label.setText(f"ETA: {eta_minutes:02d}:{eta_seconds:02d}")
+                else:
+                    self.eta_label.setText("ETA: --:--")
+            else:
+                self.eps_label.setText("Rate: 0 eps/s")
+                self.eta_label.setText("ETA: --:--")
+        else:
+            self.eps_label.setText("Rate: 0 eps/s")
+            self.eta_label.setText("ETA: --:--")
+    
+    def _format_time(self, seconds: float) -> str:
+        """Format time in seconds to MM:SS or HH:MM:SS format."""
+        if seconds < 0:
+            return "--:--"
+        
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        
+        if minutes >= 60:
+            hours = int(minutes // 60)
+            minutes = int(minutes % 60)
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        else:
+            return f"{minutes:02d}:{secs:02d}"
+    
+    def _update_episode_timing_display(self):
+        """Update episode timing displays."""
+        agent = self.controller.agent
+        
+        # Current episode elapsed time
+        if self.current_episode_start_time is not None and self.controller.current_state == RLState.TRAINING:
+            current_elapsed = time.time() - self.current_episode_start_time
+            self.current_episode_time_label.setText(f"Current Episode: {self._format_time(current_elapsed)}")
+        else:
+            self.current_episode_time_label.setText("Current Episode: --:--")
+        
+        # Best, worst, and average times from completed episodes
+        if agent.training_history:
+            successful_times = [ep.elapsed_time for ep in agent.training_history if ep.reached_goal and ep.elapsed_time > 0]
+            
+            if successful_times:
+                best_time = min(successful_times)
+                worst_time = max(successful_times)
+                avg_time = sum(successful_times) / len(successful_times)
+                
+                self.best_episode_time_label.setText(f"Best Time: {self._format_time(best_time)}")
+                self.worst_episode_time_label.setText(f"Worst Time: {self._format_time(worst_time)}")
+                self.avg_episode_time_label.setText(f"Avg Time: {self._format_time(avg_time)}")
+            else:
+                self.best_episode_time_label.setText("Best Time: --:--")
+                self.worst_episode_time_label.setText("Worst Time: --:--")
+                self.avg_episode_time_label.setText("Avg Time: --:--")
+        else:
+            self.best_episode_time_label.setText("Best Time: --:--")
+            self.worst_episode_time_label.setText("Worst Time: --:--")
+            self.avg_episode_time_label.setText("Avg Time: --:--")
     
     def _update_button_states(self):
         """Update button enabled states based on current state."""
@@ -375,9 +747,27 @@ class MainWindow(QMainWindow):
         is_training = state == RLState.TRAINING
         is_paused = state == RLState.PAUSED
         is_testing = state == RLState.TESTING
+        is_visual_mode = self.visual_radio.isChecked()
         
+        # Get training status for test button
+        training_status = self._get_training_status()
+        
+        # Update button states
         self.train_btn.setEnabled(can_start and not is_training and not is_testing)
-        self.test_btn.setEnabled((state in [RLState.IDLE, RLState.CONVERGED]) and can_start)
+        
+        # Test button: enabled only if training is ready and conditions are met
+        test_enabled = (state in [RLState.IDLE, RLState.CONVERGED]) and can_start and training_status['is_ready']
+        self.test_btn.setEnabled(test_enabled)
+        
+        # Set tooltip for test button based on training readiness
+        if not can_start:
+            self.test_btn.setToolTip("Need grid with start and target positions")
+        elif not training_status['is_ready']:
+            self.test_btn.setToolTip(f"Cannot test yet: {training_status['message']}")
+        else:
+            self.test_btn.setToolTip("Test the learned policy")
+        
+        self.step_btn.setEnabled((is_training and is_visual_mode) or (is_testing and self.controller.config.step_mode))
         self.pause_btn.setEnabled(is_training or is_paused)
         self.pause_btn.setText("Resume" if is_paused else "Pause")
         self.reset_btn.setEnabled(not is_testing)
@@ -394,7 +784,14 @@ class MainWindow(QMainWindow):
         elif not self.controller.target_coord:
             self.status_bar.showMessage("No target position - Click 'Set Target' and click on grid, or click 'New Grid'")
         elif self.controller.current_state == RLState.TRAINING:
-            self.status_bar.showMessage("Training in progress...")
+            mode = "Visual" if self.visual_radio.isChecked() else "Background"
+            if self.current_episode > 0:
+                progress = (self.current_episode / self.total_episodes) * 100
+                self.status_bar.showMessage(f"{mode} training in progress... ({progress:.1f}% complete)")
+            else:
+                self.status_bar.showMessage(f"{mode} training starting...")
+        elif self.controller.current_state == RLState.PAUSED:
+            self.status_bar.showMessage("Training paused - Click 'Resume' to continue")
         elif self.controller.current_state == RLState.TESTING:
             self.status_bar.showMessage("Testing learned policy...")
         elif self.controller.current_state == RLState.CONVERGED:
@@ -419,14 +816,101 @@ class MainWindow(QMainWindow):
             success_rate = successes / len(recent_episodes) if recent_episodes else 0
             self.success_rate_label.setText(f"Success Rate: {success_rate:.1%}")
         
+        # Update training status information
+        training_status = self._get_training_status()
+        
+        # Update visual indicator
+        self.training_status_indicator.setStyleSheet(
+            f"background-color: {training_status['status_color']}; border: 2px solid #000; border-radius: 10px;"
+        )
+        
+        # Update readiness label
+        self.training_readiness_label.setText(training_status['status_text'])
+        
+        # Update progress indicators with color coding
+        episodes_color = self._get_progress_color(
+            training_status['episodes_completed'], 
+            training_status['episodes_needed']
+        )
+        self.episodes_progress_label.setText(
+            f"Episodes: {training_status['episodes_completed']}/{training_status['episodes_needed']} needed"
+        )
+        self.episodes_progress_label.setStyleSheet(f"color: {episodes_color};")
+        
+        success_color = self._get_progress_color(
+            training_status['successful_episodes'], 
+            training_status['successful_needed']
+        )
+        self.success_progress_label.setText(
+            f"Successful: {training_status['successful_episodes']}/{training_status['successful_needed']} needed"
+        )
+        self.success_progress_label.setStyleSheet(f"color: {success_color};")
+        
+        rate_color = self._get_progress_color(
+            training_status['success_rate'], 
+            training_status['success_rate_needed'], 
+            is_percentage=True
+        )
+        self.success_rate_progress_label.setText(
+            f"Success Rate: {training_status['success_rate']:.1%}/{training_status['success_rate_needed']:.1%} needed"
+        )
+        self.success_rate_progress_label.setStyleSheet(f"color: {rate_color};")
+        
+        # Update episode timing
+        self._update_episode_timing_display()
+        
         # Update detailed stats
         if agent.training_history:
             recent_episodes = agent.training_history[-10:]  # Last 10 episodes
             stats_text = "Recent Episodes:\\n"
             for ep in recent_episodes:
                 status = "✓" if ep.reached_goal else "✗"
-                stats_text += f"Ep {ep.number}: {status} {ep.steps} steps, R={ep.total_reward:.1f}\\n"
+                time_str = self._format_time(ep.elapsed_time) if ep.elapsed_time > 0 else "--:--"
+                stats_text += f"Ep {ep.number}: {status} {ep.steps} steps, R={ep.total_reward:.1f}, T={time_str}\\n"
+            
+            # Add training status message if not ready
+            if not training_status['is_ready']:
+                stats_text += f"\\nTraining Status:\\n{training_status['message']}"
             
             self.stats_display.setPlainText(stats_text)
         else:
-            self.stats_display.setPlainText("No training data yet.")
+            self.stats_display.setPlainText("No training data yet.\\n\\nClick 'Train' to start learning before testing.")
+    
+    def _get_progress_color(self, current: float, needed: float, is_percentage: bool = False) -> str:
+        """Get color for progress indicators based on completion level."""
+        if is_percentage:
+            ratio = current / needed if needed > 0 else 0
+        else:
+            ratio = current / needed if needed > 0 else 0
+        
+        if ratio >= 1.0:
+            return "#00AA00"  # Dark green - complete
+        elif ratio >= 0.75:
+            return "#66CC00"  # Light green - nearly complete
+        elif ratio >= 0.5:
+            return "#FF8800"  # Orange - halfway
+        elif ratio >= 0.25:
+            return "#FF6600"  # Dark orange - some progress
+        else:
+            return "#CC0000"  # Dark red - insufficient
+    
+    def closeEvent(self, event: QCloseEvent):
+        """Handle application close event with proper cleanup."""
+        try:
+            # Stop the elapsed timer (handle Qt object deletion gracefully)
+            try:
+                if hasattr(self, 'elapsed_timer') and self.elapsed_timer:
+                    self.elapsed_timer.stop()
+            except RuntimeError:
+                pass  # Timer already deleted by Qt
+            
+            # Clean up controller resources (threads, timers, etc.)
+            if hasattr(self, 'controller') and self.controller:
+                self.controller.cleanup()
+            
+            # Accept the close event
+            event.accept()
+            
+        except Exception:
+            # Suppress any errors during shutdown and still close
+            event.accept()

@@ -10,7 +10,8 @@ Coord = Tuple[int, int]
 # Node states for visualization - extended for RL
 NodeState = Literal[
     "empty", "wall", "start", "target",
-    "visited", "current", "path", "q_high", "q_medium", "q_low"
+    "visited", "current", "path", "optimal_path", "q_high", "q_medium", "q_low",
+    "training_current", "training_visited", "training_considering"
 ]
 
 # Actions the RL agent can take
@@ -19,6 +20,9 @@ ActionInt = Literal[0, 1, 2, 3]  # Numerical representation
 
 # Training phases
 TrainingPhase = Literal["training", "testing", "converged"]
+
+# Training modes
+TrainingMode = Literal["background", "visual"]
 
 
 @dataclass
@@ -99,7 +103,8 @@ class Grid:
     def reset_visualization_states(self):
         """Reset all nodes to remove visualization states."""
         for node in self.nodes.values():
-            if node.state in ["visited", "current", "path", "q_high", "q_medium", "q_low"]:
+            if node.state in ["visited", "current", "path", "optimal_path", "q_high", "q_medium", "q_low",
+                             "training_current", "training_visited", "training_considering"]:
                 node.state = "empty"
 
     def reset_q_values(self):
@@ -123,6 +128,32 @@ class RLConfig:
     reward_step: float = -1.0
     step_mode: bool = False
     show_q_values: bool = True
+    # Visual training configuration
+    training_mode: TrainingMode = "background"
+    visual_step_delay: int = 300  # milliseconds between steps in visual mode
+    visual_episode_delay: int = 1000  # milliseconds between episodes in visual mode
+    
+    # Smart reward system
+    use_smart_rewards: bool = True
+    reward_progress: float = 3.0  # Reward for getting closer to goal (increased)
+    reward_exploration: float = 0.5  # Bonus for visiting new states
+    reward_dead_end: float = -20.0  # Penalty for entering dead ends
+    reward_revisit: float = -5.0  # Penalty for revisiting states in same episode (increased)
+    reward_stuck: float = -15.0  # Penalty for being stuck (no progress)
+    reward_backward: float = -3.0  # Penalty for moving away from goal (new)
+    
+    # Distance-based guidance
+    use_distance_guidance: bool = True
+    distance_reward_scale: float = 1.0
+    
+    # Dead-end detection
+    detect_dead_ends: bool = True
+    stuck_threshold: int = 5  # Steps without progress to consider "stuck"
+    
+    # Early stopping configuration
+    enable_early_stopping: bool = True
+    early_stop_patience: int = 5  # Number of successful episodes without improvement to wait
+    min_improvement_threshold: float = 0.05  # Minimum time improvement (5%) to consider as progress
 
 
 @dataclass
@@ -133,6 +164,7 @@ class Episode:
     total_reward: float
     reached_goal: bool
     epsilon_used: float
+    elapsed_time: float = 0.0  # Time taken for this episode in seconds
 
 
 @dataclass
@@ -144,11 +176,31 @@ class TrainingResult:
     average_reward: float
     final_epsilon: float
     converged: bool
+    early_stopped: bool = False
+    stopping_reason: str = ""  # Reason for early stopping
     
     @property
     def success_rate(self) -> float:
         """Calculate success rate."""
         return self.successful_episodes / self.total_episodes if self.total_episodes > 0 else 0.0
+    
+    @property
+    def best_episode_time(self) -> Optional[float]:
+        """Get the best (shortest) episode time for successful episodes."""
+        successful_times = [ep.elapsed_time for ep in self.episodes if ep.reached_goal and ep.elapsed_time > 0]
+        return min(successful_times) if successful_times else None
+    
+    @property
+    def worst_episode_time(self) -> Optional[float]:
+        """Get the worst (longest) episode time for successful episodes."""
+        successful_times = [ep.elapsed_time for ep in self.episodes if ep.reached_goal and ep.elapsed_time > 0]
+        return max(successful_times) if successful_times else None
+    
+    @property
+    def average_episode_time(self) -> Optional[float]:
+        """Get the average episode time for successful episodes."""
+        successful_times = [ep.elapsed_time for ep in self.episodes if ep.reached_goal and ep.elapsed_time > 0]
+        return sum(successful_times) / len(successful_times) if successful_times else None
 
 
 @dataclass
