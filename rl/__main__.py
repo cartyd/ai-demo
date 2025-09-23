@@ -2,6 +2,8 @@
 
 import sys
 import os
+import signal
+import atexit
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
@@ -28,13 +30,95 @@ def main():
     from .ui.main_window import MainWindow
     from .app.controller import RLController
     
-    # Create controller and main window
-    controller = RLController()
-    window = MainWindow(controller)
+    controller = None
+    window = None
     
-    # Show window and run event loop
-    window.show()
-    return app.exec()
+    # Ensure Qt cleanup happens before Python module shutdown
+    def on_exit_cleanup():
+        try:
+            if controller:
+                controller.cleanup()
+        except Exception:
+            pass
+        try:
+            if app:
+                # Force process all pending events multiple times to ensure thread cleanup
+                for _ in range(3):
+                    app.processEvents()
+                app.quit()
+        except Exception:
+            pass
+    
+    atexit.register(on_exit_cleanup)
+    
+    def signal_handler(sig, frame):
+        """Handle system signals for graceful shutdown."""
+        print(f"\nReceived signal {sig}, shutting down gracefully...")
+        try:
+            if controller:
+                controller.cleanup()
+        except Exception:
+            pass  # Ignore cleanup errors during signal handling
+        try:
+            if window:
+                window.close()
+        except Exception:
+            pass  # Ignore close errors during signal handling
+        try:
+            # Process events to ensure cleanup operations complete
+            for _ in range(3):
+                app.processEvents()
+            app.quit()
+        except Exception:
+            pass  # Ignore quit errors
+        # Force exit if Qt cleanup fails
+        sys.exit(0)
+    
+    # Set up signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        # Create controller and main window
+        controller = RLController()
+        window = MainWindow(controller)
+        
+        # Show window and run event loop
+        window.show()
+        return app.exec()
+        
+    except Exception as e:
+        print(f"Application error: {e}")
+        return 1
+    finally:
+        # Ensure cleanup even if something goes wrong
+        try:
+            if controller:
+                controller.cleanup()
+        except Exception as cleanup_error:
+            print(f"Cleanup error: {cleanup_error}")
+        
+        # Force Qt application shutdown before Python module cleanup
+        try:
+            if app:
+                # Process any pending events multiple times to ensure thread cleanup
+                for _ in range(5):
+                    app.processEvents()
+                
+                # Properly close and delete the application
+                app.quit()
+                app.deleteLater()
+                
+                # Force event processing to handle deleteLater() multiple times
+                for _ in range(5):
+                    app.processEvents()
+                    
+                # Final safety check - wait briefly for Qt to finish cleanup
+                import time
+                time.sleep(0.1)
+                
+        except Exception as qt_cleanup_error:
+            print(f"Qt cleanup error: {qt_cleanup_error}")
 
 
 if __name__ == "__main__":

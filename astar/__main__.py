@@ -28,13 +28,38 @@ def main():
     from .ui.main_window import MainWindow
     from .app.controller import AStarController
     
-    # Create controller and main window
-    controller = AStarController()
-    window = MainWindow(controller)
+    controller = None
+    window = None
     
-    # Show window and run event loop
-    window.show()
-    return app.exec()
+    try:
+        # Create controller and main window
+        controller = AStarController()
+        window = MainWindow(controller)
+        
+        # Show window and run event loop
+        window.show()
+        return app.exec()
+        
+    except Exception as e:
+        print(f"Application error: {e}")
+        return 1
+        
+    finally:
+        # Ensure cleanup even if something goes wrong
+        try:
+            if controller and hasattr(controller, '_timer'):
+                controller._timer.stop()
+        except Exception:
+            pass
+            
+        try:
+            if app:
+                # Process any pending events to ensure cleanup
+                for _ in range(3):
+                    app.processEvents()
+                app.quit()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

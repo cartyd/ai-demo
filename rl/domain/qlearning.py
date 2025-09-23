@@ -1,15 +1,16 @@
 """Q-Learning algorithm implementation for pathfinding."""
 
 import numpy as np
-from typing import Optional, List
+import time
+from typing import Optional, List, Callable
 from .types import (
     Coord, Grid, RLConfig, ActionInt, QValues, Episode, TrainingResult, 
-    PathfindingResult, ACTION_DELTAS, TrainingPhase
+    PathfindingResult, ACTION_DELTAS, TrainingPhase, TrainingMode
 )
 
 
 class QLearningEnvironment:
-    """Environment for Q-Learning pathfinding."""
+    """Environment for Q-Learning pathfinding with smart reward system."""
     
     def __init__(self, grid: Grid, start: Coord, target: Coord, config: RLConfig):
         self.grid = grid
@@ -20,11 +21,24 @@ class QLearningEnvironment:
         self.steps_taken = 0
         self.total_reward = 0.0
         
+        # Smart reward tracking
+        self.visited_states: set[Coord] = set()
+        self.position_history: list[Coord] = []
+        self.last_distance_to_goal = self._manhattan_distance(start, target)
+        self.steps_without_progress = 0
+        
     def reset(self) -> Coord:
         """Reset environment to initial state."""
         self.current_pos = self.start
         self.steps_taken = 0
         self.total_reward = 0.0
+        
+        # Reset smart reward tracking
+        self.visited_states = {self.start}
+        self.position_history = [self.start]
+        self.last_distance_to_goal = self._manhattan_distance(self.start, self.target)
+        self.steps_without_progress = 0
+        
         return self.current_pos
     
     def step(self, action: ActionInt) -> tuple[Coord, float, bool]:
@@ -38,38 +52,45 @@ class QLearningEnvironment:
             Tuple of (next_position, reward, episode_done)
         """
         self.steps_taken += 1
+        old_pos = self.current_pos
         
         # Calculate next position
         delta = ACTION_DELTAS[action]
         next_pos = (self.current_pos[0] + delta[0], self.current_pos[1] + delta[1])
         
-        # Check if next position is valid
+        # Determine base reward and new position
         if not self.grid.is_valid_coord(next_pos):
             # Hit boundary - stay in place, negative reward
-            reward = self.config.reward_wall
+            base_reward = self.config.reward_wall
+            new_pos = self.current_pos  # Stay in place
             done = False
         else:
             next_node = self.grid.get_node(next_pos)
             if not next_node or not next_node.is_passable():
                 # Hit wall - stay in place, negative reward
-                reward = self.config.reward_wall
+                base_reward = self.config.reward_wall
+                new_pos = self.current_pos  # Stay in place
                 done = False
             else:
                 # Valid move
                 self.current_pos = next_pos
+                new_pos = next_pos
                 
                 # Check if reached goal
                 if next_pos == self.target:
-                    reward = self.config.reward_goal
+                    base_reward = self.config.reward_goal
                     done = True
                 else:
-                    reward = self.config.reward_step
+                    base_reward = self.config.reward_step
                     done = False
         
         # Check if max steps reached
         if self.steps_taken >= self.config.max_steps_per_episode:
             done = True
-            
+        
+        # Calculate smart reward
+        reward = self._calculate_smart_reward(old_pos, new_pos, base_reward, done)
+        
         self.total_reward += reward
         return self.current_pos, reward, done
     
@@ -86,6 +107,98 @@ class QLearningEnvironment:
                 valid_actions.append(action)
         
         return valid_actions
+    
+    def _manhattan_distance(self, pos1: Coord, pos2: Coord) -> float:
+        """Calculate Manhattan distance between two positions."""
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+    
+    def _is_dead_end(self, pos: Coord) -> bool:
+        """Check if a position is a dead end (only one exit)."""
+        if not self.config.detect_dead_ends:
+            return False
+            
+        valid_actions = self.get_valid_actions(pos)
+        return len(valid_actions) <= 1  # Dead end or isolated
+    
+    def _calculate_smart_reward(self, old_pos: Coord, new_pos: Coord, 
+                               base_reward: float, done: bool) -> float:
+        """Calculate smart reward with multiple components."""
+        if not self.config.use_smart_rewards:
+            return base_reward
+        
+        total_reward = base_reward
+        
+        # 1. Distance-based progress reward
+        if self.config.use_distance_guidance and new_pos != old_pos:
+            old_dist = self._manhattan_distance(old_pos, self.target)
+            new_dist = self._manhattan_distance(new_pos, self.target)
+            
+            if new_dist < old_dist:
+                # Got closer to goal
+                progress_reward = self.config.reward_progress
+                total_reward += progress_reward
+                self.steps_without_progress = 0
+            elif new_dist > old_dist:
+                # Got further from goal - use stronger backward penalty
+                total_reward += self.config.reward_backward
+                self.steps_without_progress += 1
+            else:
+                # Same distance
+                self.steps_without_progress += 1
+            
+            self.last_distance_to_goal = new_dist
+        
+        # 2. Exploration bonus (for visiting new states)
+        if new_pos not in self.visited_states:
+            total_reward += self.config.reward_exploration
+            self.visited_states.add(new_pos)
+        else:
+            # Penalty for revisiting states
+            total_reward += self.config.reward_revisit
+        
+        # 3. Dead-end penalty
+        if self._is_dead_end(new_pos) and new_pos != self.target:
+            total_reward += self.config.reward_dead_end
+        
+        # 4. Stuck penalty (no progress for too long)
+        if self.steps_without_progress >= self.config.stuck_threshold:
+            total_reward += self.config.reward_stuck
+            # Reset counter to avoid accumulating too much penalty
+            self.steps_without_progress = 0
+        
+        # 5. Update position history (keep last 10 positions for analysis)
+        self.position_history.append(new_pos)
+        if len(self.position_history) > 10:
+            self.position_history.pop(0)
+        
+        # 6. Enhanced loop detection and immediate backtracking penalty
+        if len(self.position_history) >= 2:
+            # Immediate backtracking penalty (going back to previous position)
+            if self.position_history[-1] == self.position_history[-2]:
+                total_reward -= 8.0  # Strong penalty for immediate backtrack
+            
+        if len(self.position_history) >= 4:
+            # 2-step oscillation (A->B->A->B)
+            if (self.position_history[-1] == self.position_history[-3] and
+                self.position_history[-2] == self.position_history[-4]):
+                total_reward -= 10.0  # Strong oscillation penalty
+                
+        if len(self.position_history) >= 6:
+            # 3-step loops (A->B->C->A->B->C)
+            if (self.position_history[-1] == self.position_history[-4] and
+                self.position_history[-2] == self.position_history[-5] and
+                self.position_history[-3] == self.position_history[-6]):
+                total_reward -= 12.0  # Very strong loop penalty
+                
+        # 7. Recent position revisit penalty (visited within last 3 steps)
+        if len(self.position_history) >= 4:
+            recent_positions = self.position_history[-4:-1]  # Last 3 positions (excluding current)
+            if new_pos in recent_positions:
+                steps_ago = len(self.position_history) - recent_positions.index(new_pos)
+                penalty = max(-6.0, -2.0 * steps_ago)  # Stronger penalty for more recent revisits
+                total_reward += penalty
+        
+        return total_reward
 
 
 class QLearningAgent:
@@ -97,6 +210,13 @@ class QLearningAgent:
         self.training_phase: TrainingPhase = "training"
         self.episodes_completed = 0
         self.training_history: List[Episode] = []
+        
+        # Visual training state
+        self._visual_env: Optional[QLearningEnvironment] = None
+        self._visual_state: Optional[Coord] = None
+        self._visual_episode_reward = 0.0
+        self._visual_episode_steps = 0
+        self._visual_epsilon_used = 0.0
         
     def reset(self):
         """Reset the agent."""
@@ -136,16 +256,120 @@ class QLearningAgent:
         return valid_actions[best_idx]
     
     def select_action(self, grid: Grid, state: Coord, valid_actions: List[ActionInt]) -> ActionInt:
-        """Select action using epsilon-greedy policy."""
+        """Select action using smart epsilon-greedy policy with heuristics."""
         if not valid_actions:
             return 0
         
         if self.training_phase == "training" and np.random.random() < self.epsilon:
-            # Explore: choose random valid action
-            return np.random.choice(valid_actions)
+            # Smart exploration: bias toward goal direction and avoid dead ends
+            return self._smart_explore(grid, state, valid_actions)
         else:
-            # Exploit: choose best action
-            return self.get_best_action(grid, state, valid_actions)
+            # Smart exploitation: combine Q-values with heuristics
+            return self._smart_exploit(grid, state, valid_actions)
+    
+    def _smart_explore(self, grid: Grid, state: Coord, valid_actions: List[ActionInt]) -> ActionInt:
+        """Smart exploration that avoids obvious bad moves and recent positions."""
+        if not self.config.use_smart_rewards:
+            return np.random.choice(valid_actions)
+        
+        # Get environment to access position history
+        env = getattr(self, '_current_env', None)
+        
+        # Filter out actions that lead to dead ends or recent positions
+        good_actions = []
+        recent_positions = []
+        if env and hasattr(env, 'position_history') and len(env.position_history) >= 3:
+            recent_positions = env.position_history[-3:]  # Last 3 positions
+        
+        for action in valid_actions:
+            delta = ACTION_DELTAS[action]
+            next_pos = (state[0] + delta[0], state[1] + delta[1])
+            
+            # Skip if this would revisit a recent position
+            if next_pos in recent_positions:
+                continue
+            
+            # Avoid dead ends during exploration
+            env_temp = QLearningEnvironment(grid, state, (0, 0), self.config)
+            if not env_temp._is_dead_end(next_pos):
+                good_actions.append(action)
+        
+        # If all actions lead to dead ends, just pick randomly
+        if not good_actions:
+            good_actions = valid_actions
+        
+        # Bias exploration toward goal direction
+        if len(good_actions) > 1 and hasattr(self, '_target_coord'):
+            target = getattr(self, '_target_coord', None)
+            if target:
+                # Calculate which actions move toward goal
+                toward_goal = []
+                for action in good_actions:
+                    delta = ACTION_DELTAS[action]
+                    next_pos = (state[0] + delta[0], state[1] + delta[1])
+                    
+                    current_dist = abs(state[0] - target[0]) + abs(state[1] - target[1])
+                    next_dist = abs(next_pos[0] - target[0]) + abs(next_pos[1] - target[1])
+                    
+                    if next_dist < current_dist:
+                        toward_goal.append(action)
+                
+                # 85% chance to pick goal-directed action during exploration
+                if toward_goal and np.random.random() < 0.85:
+                    return np.random.choice(toward_goal)
+        
+        return np.random.choice(good_actions)
+    
+    def _smart_exploit(self, grid: Grid, state: Coord, valid_actions: List[ActionInt]) -> ActionInt:
+        """Smart exploitation that combines Q-values with heuristics."""
+        if not valid_actions:
+            return 0
+        
+        node = grid.get_node(state)
+        if not node:
+            return valid_actions[0]
+        
+        # Get Q-values for valid actions
+        q_values = node.q_values.as_array()
+        
+        # Calculate combined scores (Q-value + heuristics)
+        action_scores = []
+        for action in valid_actions:
+            q_score = q_values[action]
+            
+            # Add distance-based heuristic if enabled
+            heuristic_score = 0.0
+            if (self.config.use_distance_guidance and 
+                hasattr(self, '_target_coord') and 
+                getattr(self, '_target_coord', None)):
+                
+                target = getattr(self, '_target_coord')
+                delta = ACTION_DELTAS[action]
+                next_pos = (state[0] + delta[0], state[1] + delta[1])
+                
+                current_dist = abs(state[0] - target[0]) + abs(state[1] - target[1])
+                next_dist = abs(next_pos[0] - target[0]) + abs(next_pos[1] - target[1])
+                
+                if next_dist < current_dist:
+                    heuristic_score = 1.0  # Bonus for moving toward goal
+                elif next_dist > current_dist:
+                    heuristic_score = -0.5  # Small penalty for moving away
+            
+            # Avoid dead ends during exploitation
+            dead_end_penalty = 0.0
+            if self.config.detect_dead_ends:
+                delta = ACTION_DELTAS[action]
+                next_pos = (state[0] + delta[0], state[1] + delta[1])
+                env_temp = QLearningEnvironment(grid, state, (0, 0), self.config)
+                if env_temp._is_dead_end(next_pos):
+                    dead_end_penalty = -5.0
+            
+            combined_score = q_score + heuristic_score + dead_end_penalty
+            action_scores.append((action, combined_score))
+        
+        # Select action with highest combined score
+        best_action = max(action_scores, key=lambda x: x[1])[0]
+        return best_action
     
     def update_q_value(self, grid: Grid, state: Coord, action: ActionInt, 
                       reward: float, next_state: Coord, done: bool):
@@ -175,11 +399,17 @@ class QLearningAgent:
                           self.epsilon * self.config.epsilon_decay)
     
     def train_episode(self, env: QLearningEnvironment) -> Episode:
-        """Train for one episode."""
+        """Train for one episode with timing."""
+        episode_start_time = time.time()
+        
         state = env.reset()
         episode_reward = 0.0
         episode_steps = 0
         epsilon_used = self.epsilon
+        
+        # Set target and environment for smart heuristics
+        self._target_coord = env.target
+        self._current_env = env
         
         while True:
             # Select action
@@ -200,13 +430,17 @@ class QLearningAgent:
             if done:
                 break
         
+        # Calculate episode elapsed time
+        episode_elapsed_time = time.time() - episode_start_time
+        
         # Create episode record
         episode = Episode(
             number=self.episodes_completed,
             steps=episode_steps,
             total_reward=episode_reward,
             reached_goal=(state == env.target),
-            epsilon_used=epsilon_used
+            epsilon_used=epsilon_used,
+            elapsed_time=episode_elapsed_time
         )
         
         self.training_history.append(episode)
@@ -264,6 +498,9 @@ class QLearningAgent:
         self.training_phase = "testing"
         env = QLearningEnvironment(grid, start, target, self.config)
         
+        # Set target for smart heuristics
+        self._target_coord = target
+        
         path = [start]
         state = env.reset()
         total_reward = 0.0
@@ -308,3 +545,145 @@ class QLearningAgent:
             found=False,
             training_episodes=self.episodes_completed
         )
+    
+    # Visual Training Methods
+    
+    def start_visual_episode(self, grid: Grid, start: Coord, target: Coord) -> bool:
+        """Start a new visual training episode."""
+        try:
+            self._visual_env = QLearningEnvironment(grid, start, target, self.config)
+            self._visual_state = self._visual_env.reset()
+            self._visual_episode_reward = 0.0
+            self._visual_episode_steps = 0
+            self._visual_epsilon_used = self.epsilon
+            self._visual_episode_start_time = time.time()  # Track episode start time
+            
+            # Set target and environment for smart heuristics
+            self._target_coord = target
+            self._current_env = self._visual_env
+            
+            # Clear any previous visual states
+            grid.reset_visualization_states()
+            
+            # Mark current position
+            if self._visual_state != start and self._visual_state != target:
+                grid.set_node_state(self._visual_state, "training_current")
+            
+            return True
+        except Exception:
+            return False
+    
+    def step_visual_training(self) -> tuple[bool, Optional[Episode]]:
+        """
+        Execute one step of visual training.
+        Returns (episode_done, episode_result)
+        """
+        if not self._visual_env or self._visual_state is None:
+            return True, None
+        
+        # Get valid actions and show considering states
+        valid_actions = self._visual_env.get_valid_actions(self._visual_state)
+        if not valid_actions:
+            return True, None
+        
+        # Briefly highlight possible moves (for visualization)
+        self._highlight_possible_moves(valid_actions)
+        
+        # Select action
+        action = self.select_action(self._visual_env.grid, self._visual_state, valid_actions)
+        
+        # Take action
+        next_state, reward, done = self._visual_env.step(action)
+        self._visual_episode_reward += reward
+        self._visual_episode_steps += 1
+        
+        # Update Q-value
+        self.update_q_value(self._visual_env.grid, self._visual_state, action, reward, next_state, done)
+        
+        # Update visual states
+        self._update_visual_states(next_state, done)
+        
+        # Update state
+        self._visual_state = next_state
+        
+        # Check if episode is done
+        if done:
+            episode = self._finish_visual_episode()
+            return True, episode
+        
+        return False, None
+    
+    def _highlight_possible_moves(self, valid_actions: List[ActionInt]):
+        """Highlight possible next moves for visualization."""
+        if not self._visual_env or self._visual_state is None:
+            return
+        
+        for action in valid_actions:
+            delta = ACTION_DELTAS[action]
+            next_pos = (self._visual_state[0] + delta[0], self._visual_state[1] + delta[1])
+            
+            if (self._visual_env.grid.is_valid_coord(next_pos) and 
+                next_pos != self._visual_env.start and 
+                next_pos != self._visual_env.target):
+                node = self._visual_env.grid.get_node(next_pos)
+                if node and node.is_passable() and node.state not in ["training_current", "training_visited"]:
+                    self._visual_env.grid.set_node_state(next_pos, "training_considering")
+    
+    def _update_visual_states(self, next_state: Coord, done: bool):
+        """Update visual states after a step."""
+        if not self._visual_env:
+            return
+        
+        # Clear considering states
+        for node in self._visual_env.grid.nodes.values():
+            if node.state == "training_considering":
+                node.state = "empty"
+        
+        # Mark previous position as visited (unless it's start/target)
+        if (self._visual_state != self._visual_env.start and 
+            self._visual_state != self._visual_env.target):
+            self._visual_env.grid.set_node_state(self._visual_state, "training_visited")
+        
+        # Mark new position as current (unless it's start/target or episode is done)
+        if not done and next_state != self._visual_env.start and next_state != self._visual_env.target:
+            self._visual_env.grid.set_node_state(next_state, "training_current")
+    
+    def _finish_visual_episode(self) -> Episode:
+        """Finish the current visual episode and return episode data."""
+        # Calculate episode elapsed time
+        episode_elapsed_time = time.time() - self._visual_episode_start_time if hasattr(self, '_visual_episode_start_time') else 0.0
+        
+        # Create episode record
+        episode = Episode(
+            number=self.episodes_completed,
+            steps=self._visual_episode_steps,
+            total_reward=self._visual_episode_reward,
+            reached_goal=(self._visual_state == self._visual_env.target if self._visual_env else False),
+            epsilon_used=self._visual_epsilon_used,
+            elapsed_time=episode_elapsed_time
+        )
+        
+        # Add to history
+        self.training_history.append(episode)
+        self.episodes_completed += 1
+        
+        # Decay epsilon
+        self.decay_epsilon()
+        
+        # Clear visual states (except start/target)
+        if self._visual_env:
+            for node in self._visual_env.grid.nodes.values():
+                if node.state in ["training_current", "training_visited", "training_considering"]:
+                    node.state = "empty"
+        
+        # Reset visual training state
+        self._visual_env = None
+        self._visual_state = None
+        self._visual_episode_reward = 0.0
+        self._visual_episode_steps = 0
+        
+        return episode
+    
+    def is_visual_training_active(self) -> bool:
+        """Check if visual training is currently active."""
+        return self._visual_env is not None and self._visual_state is not None

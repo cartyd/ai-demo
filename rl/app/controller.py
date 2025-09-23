@@ -84,7 +84,7 @@ class TrainingWorker(QObject):
         
         return False, ""
     def run(self):
-        """Run training."""
+        """Run training with frequent stop checks."""
         try:
             env = QLearningEnvironment(self.grid, self.start, self.target, self.agent.config)
             
@@ -98,38 +98,60 @@ class TrainingWorker(QObject):
             stopping_reason = ""
             
             for episode_num in range(self.episodes):
-                # Check for stop signal
+                # Check for stop signal at the beginning of each episode
                 if self.should_stop:
+                    stopping_reason = "Training stopped by user"
                     break
                 
-                # Handle pause
+                # Handle pause with frequent stop checks
                 while self.is_paused and not self.should_stop:
                     import time
-                    time.sleep(0.1)  # Sleep briefly while paused
+                    time.sleep(0.01)  # Very short sleep for rapid response
                 
                 if self.should_stop:
+                    stopping_reason = "Training stopped by user"
                     break
-                    
-                episode = self.agent.train_episode(env)
-                episodes_list.append(episode)
                 
-                if episode.reached_goal:
-                    successful_episodes += 1
+                # Train episode with stop check capability
+                try:
+                    episode = self.agent.train_episode(env)
                     
-                    # Check for early stopping after successful episode
-                    should_stop, reason = self._should_stop_early(episode)
-                    if should_stop:
-                        early_stopped = True
-                        stopping_reason = reason
-                        self.agent.training_phase = "converged"
+                    # Check for stop again after episode completion
+                    if self.should_stop:
+                        stopping_reason = "Training stopped by user"
                         break
-                
-                # Emit progress signal for every episode (lightweight)
-                self.progress_updated.emit(episode_num + 1, self.episodes)
-                
-                # Only emit detailed episode data occasionally to avoid overwhelming UI
-                if (episode_num + 1) % self.episode_update_interval == 0 or episode_num == self.episodes - 1:
-                    self.episode_completed.emit(episode)
+                    
+                    episodes_list.append(episode)
+                    
+                    if episode.reached_goal:
+                        successful_episodes += 1
+                        
+                        # Check for early stopping after successful episode
+                        should_stop, reason = self._should_stop_early(episode)
+                        if should_stop:
+                            early_stopped = True
+                            stopping_reason = reason
+                            self.agent.training_phase = "converged"
+                            break
+                    
+                    # Emit progress signal for every episode (lightweight)
+                    self.progress_updated.emit(episode_num + 1, self.episodes)
+                    
+                    # Only emit detailed episode data occasionally to avoid overwhelming UI
+                    if (episode_num + 1) % self.episode_update_interval == 0 or episode_num == self.episodes - 1:
+                        self.episode_completed.emit(episode)
+                        
+                except Exception as episode_error:
+                    # If training episode fails, check if we should stop
+                    if self.should_stop:
+                        stopping_reason = "Training stopped by user"
+                        break
+                    # Otherwise re-raise the error
+                    raise episode_error
+            
+            # Final stop check before emitting results
+            if self.should_stop and not stopping_reason:
+                stopping_reason = "Training stopped by user"
             
             # Calculate final statistics
             total_reward = sum(ep.total_reward for ep in episodes_list)
@@ -155,10 +177,17 @@ class TrainingWorker(QObject):
                 stopping_reason=stopping_reason
             )
             
-            self.training_finished.emit(result)
+            # Only emit result if we haven't been asked to stop
+            if not self.should_stop:
+                self.training_finished.emit(result)
             
         except Exception as e:
-            self.error_occurred.emit(str(e))
+            # Check if we're stopping before emitting error
+            if not self.should_stop:
+                self.error_occurred.emit(str(e))
+        
+        # Always print completion message for debugging
+        print(f"TrainingWorker.run() completed (stopped: {self.should_stop})")
 
 
 class RLController(QObject):
@@ -214,6 +243,7 @@ class RLController(QObject):
         self._visual_successful_times = []  # Track times for visual training early stopping
         self._visual_no_improvement_count = 0
         self._visual_best_time = float('inf')
+        self._original_episode_target = 0  # Track original training target for mode transitions
         
         # Setup state machine callbacks
         self._setup_state_callbacks()
@@ -458,8 +488,17 @@ class RLController(QObject):
     def _start_background_training(self, episodes: int) -> bool:
         """Start background training in worker thread."""
         try:
+            # Store original target for potential mode switching
+            self._original_episode_target = episodes
+            
+            # Clean up any existing thread first
+            self._cleanup_training_thread()
+            
             # Create worker thread for training
             self._training_thread = QThread()
+            # Set the thread to auto-delete when finished to prevent destructor issues
+            self._training_thread.setObjectName("RL-TrainingThread")
+            
             self._training_worker = TrainingWorker(
                 self._agent, self._grid, self._start_coord, self._target_coord, episodes
             )
@@ -469,8 +508,10 @@ class RLController(QObject):
             self._training_worker.episode_completed.connect(self._on_episode_completed)
             self._training_worker.progress_updated.connect(self._on_progress_updated)
             self._training_worker.training_finished.connect(self._on_training_finished)
+            self._training_worker.training_finished.connect(self._cleanup_training_thread)
             self._training_worker.error_occurred.connect(self._on_training_error)
             self._training_thread.started.connect(self._training_worker.run)
+            # Also connect to thread finished signal as backup cleanup
             self._training_thread.finished.connect(self._cleanup_training_thread)
             
             # Start training
@@ -487,6 +528,7 @@ class RLController(QObject):
         try:
             self._visual_episodes_remaining = episodes
             self._visual_episode_active = False
+            self._original_episode_target = episodes  # Store original target
             
             # Reset early stopping state
             self._visual_successful_times = []
@@ -514,6 +556,21 @@ class RLController(QObject):
             self._complete_visual_training()
             return
         
+        # Check if we should stop early due to achieving validation criteria
+        episodes = self._agent.training_history
+        if episodes:
+            episodes_completed = len(episodes)
+            successful_episodes = sum(1 for ep in episodes if ep.reached_goal)
+            success_rate = successful_episodes / episodes_completed if episodes_completed > 0 else 0.0
+            
+            # Stop early if we meet validation criteria and have high success rate
+            if (episodes_completed >= 50 and successful_episodes >= 10 and success_rate >= 0.95):
+                self._complete_visual_training(
+                    early_stopped=True, 
+                    stopping_reason=f"Training criteria exceeded: {success_rate:.1%} success rate with {successful_episodes} successful episodes out of {episodes_completed} total"
+                )
+                return
+        
         # Start new episode
         if self._agent.start_visual_episode(self._grid, self._start_coord, self._target_coord):
             self._visual_episode_active = True
@@ -537,11 +594,23 @@ class RLController(QObject):
         
         # Check convergence (only if not already early stopped)
         converged = early_stopped
-        if not early_stopped and len(episodes) >= 100:
-            recent_success = sum(1 for ep in episodes[-100:] if ep.reached_goal)
-            converged = recent_success >= 90
-            if converged:
-                stopping_reason = f"Converged with {recent_success}% success rate over last 100 episodes"
+        if not early_stopped:
+            # Check basic validation criteria first (matches _validate_training_data requirements)
+            episodes_completed = len(episodes)
+            success_rate = successful_episodes / episodes_completed if episodes_completed > 0 else 0.0
+            
+            if (episodes_completed >= 50 and successful_episodes >= 10 and success_rate >= 0.2):
+                # Check for high-performance convergence
+                if len(episodes) >= 100:
+                    recent_success = sum(1 for ep in episodes[-100:] if ep.reached_goal)
+                    recent_success_rate = recent_success / 100
+                    if recent_success_rate >= 0.9:
+                        converged = True
+                        stopping_reason = f"Converged with {recent_success_rate:.1%} success rate over last 100 episodes"
+                # Also check for very high success rate with fewer episodes
+                elif episodes_completed >= 50 and success_rate >= 0.95:
+                    converged = True
+                    stopping_reason = f"High performance achieved: {success_rate:.1%} success rate over {episodes_completed} episodes"
         
         if converged:
             self._agent.training_phase = "converged"
@@ -585,6 +654,11 @@ class RLController(QObject):
         """Stop training completely."""
         if self._training_worker:
             self._training_worker.stop()
+            # Wait for the thread to finish gracefully
+            if self._training_thread and self._training_thread.isRunning():
+                if not self._training_thread.wait(2000):  # Wait up to 2 seconds
+                    self._training_thread.terminate()  # Force termination if needed
+                    self._training_thread.wait(500)  # Give it time to terminate
         if self._config.training_mode == "visual":
             self._timer.stop()
             self._visual_episode_active = False
@@ -773,6 +847,7 @@ class RLController(QObject):
         self._visual_successful_times = []
         self._visual_no_improvement_count = 0
         self._visual_best_time = float('inf')
+        self._original_episode_target = 0
         
         self.grid_updated.emit()
         return self._state_machine.reset_to_idle()
@@ -797,6 +872,42 @@ class RLController(QObject):
         
         # Update agent config
         self._agent.config = self._config
+    
+    def handle_training_mode_transition(self, new_mode: str):
+        """Handle seamless transition between training modes during active training."""
+        if not self._state_machine.is_training():
+            return
+            
+        if new_mode == "background" and self._config.training_mode == "background":
+            # Switching from visual to background
+            # Stop visual training timer and convert to background training
+            self._timer.stop()
+            self._visual_episode_active = False
+            
+            # Calculate remaining episodes
+            remaining_episodes = max(0, self._visual_episodes_remaining)
+            if remaining_episodes > 0:
+                # Start background training for remaining episodes
+                self._start_background_training(remaining_episodes)
+                
+        elif new_mode == "visual" and self._config.training_mode == "visual":
+            # Switching from background to visual
+            # Stop background training and convert to visual training
+            if self._training_worker:
+                self._training_worker.stop()
+                
+            # Clean up background training
+            self._cleanup_training_thread()
+            
+            # Calculate remaining episodes based on original plan
+            current_episodes = self._agent.episodes_completed
+            remaining_episodes = max(0, self._original_episode_target - current_episodes)
+            
+            if remaining_episodes > 0:
+                # Start visual training for remaining episodes
+                self._visual_episodes_remaining = remaining_episodes
+                self._visual_episode_active = False
+                self._start_next_visual_episode()
     
     # State Machine Callbacks
     
@@ -865,8 +976,13 @@ class RLController(QObject):
                 if not self.step_testing():
                     # If step_testing returns False, stop the timer
                     self._timer.stop()
-            elif self._state_machine.is_training() and self._config.training_mode == "visual":
-                self._step_visual_training()
+            elif self._state_machine.is_training():
+                # Only step visual training if we're in visual mode and have an active episode
+                if self._config.training_mode == "visual" and self._visual_episode_active:
+                    self._step_visual_training()
+                elif self._config.training_mode == "background":
+                    # If we switched to background mode but timer is still running, stop it
+                    self._timer.stop()
         except Exception as e:
             self.error_occurred.emit(f"Timer tick error: {str(e)}")
             self._timer.stop()
@@ -897,16 +1013,77 @@ class RLController(QObject):
         self._state_machine.fail_error()
         self.error_occurred.emit(f"Training error: {error_message}")
     
-    def _cleanup_training_thread(self):
-        """Clean up training thread."""
-        if self._training_thread:
-            if self._training_thread.isRunning():
-                self._training_thread.quit()
-                self._training_thread.wait(1000)  # Wait up to 1 second
-            self._training_thread.deleteLater()
+    def _cleanup_training_thread(self, shutdown_mode=False):
+        """Clean up training thread with proper synchronization."""
+        try:
+            # Stop and disconnect worker first
+            if self._training_worker:
+                try:
+                    self._training_worker.stop()
+                    # Disconnect all signals to prevent issues during cleanup
+                    self._training_worker.blockSignals(True)
+                except RuntimeError:
+                    pass  # Worker already deleted or disconnected
+                # Don't delete worker yet - let thread cleanup handle it
+            
+            # Clean up thread with proper synchronization
+            if self._training_thread:
+                try:
+                    if self._training_thread.isRunning():
+                        # First try to stop gracefully
+                        self._training_thread.quit()
+                        
+                        # Wait longer for graceful termination
+                        wait_time = 50 if shutdown_mode else 1000  # 50ms vs 1s
+                        if not self._training_thread.wait(wait_time):
+                            # If graceful shutdown fails, force termination
+                            print("Warning: Force terminating training thread")
+                            self._training_thread.terminate()
+                            # Give more time for forced termination
+                            final_wait = 100 if shutdown_mode else 500
+                            if not self._training_thread.wait(final_wait):
+                                print("Error: Training thread failed to terminate")
+                    
+                    # Only delete thread after it's completely stopped
+                    if not self._training_thread.isRunning():
+                        # Disconnect all signals first to prevent callbacks during deletion
+                        try:
+                            self._training_thread.blockSignals(True)
+                        except RuntimeError:
+                            pass
+                        
+                        # Now safe to delete the thread object
+                        self._training_thread.deleteLater()
+                        
+                        # Process events to ensure deletion happens
+                        try:
+                            from PySide6.QtWidgets import QApplication
+                            app = QApplication.instance()
+                            if app:
+                                # Process events multiple times to ensure proper cleanup
+                                for _ in range(3):
+                                    app.processEvents()
+                        except Exception:
+                            pass
+                    
+                except RuntimeError:
+                    pass  # Thread already deleted
+                
+                # Clear reference regardless of success
+                self._training_thread = None
+            
+            # Now safe to delete worker
+            if self._training_worker:
+                try:
+                    self._training_worker.deleteLater()
+                except RuntimeError:
+                    pass
+                self._training_worker = None
+                
+        except Exception as e:
+            # Log cleanup errors but ensure references are cleared
+            print(f"Thread cleanup error: {e}")
             self._training_thread = None
-        if self._training_worker:
-            self._training_worker.deleteLater()
             self._training_worker = None
     
     def cleanup(self):
@@ -916,41 +1093,64 @@ class RLController(QObject):
             try:
                 if hasattr(self, '_timer') and self._timer is not None:
                     self._timer.stop()
+                    self._timer.deleteLater()
             except RuntimeError:
                 pass  # Qt object already deleted
             
-            # Stop and cleanup training worker/thread
+            # Force stop any running operations immediately
             try:
-                if hasattr(self, '_training_worker') and self._training_worker:
+                if self._training_worker:
                     self._training_worker.stop()
+            except Exception:
+                pass
+            
+            # Reset visual training state to prevent timer issues
+            self._visual_episode_active = False
+            self._visual_episodes_remaining = 0
+            
+            # Clean up training thread and worker with shutdown mode
+            self._cleanup_training_thread(shutdown_mode=True)
+            
+            # Final safety check: ensure thread is completely stopped before returning
+            max_attempts = 10
+            attempt = 0
+            while (hasattr(self, '_training_thread') and self._training_thread and 
+                   self._training_thread.isRunning() and attempt < max_attempts):
+                try:
+                    print(f"Waiting for thread termination (attempt {attempt + 1})")
+                    self._training_thread.terminate()
+                    if self._training_thread.wait(10):  # 10ms wait
+                        break
+                    attempt += 1
+                except Exception:
+                    break
+            
+            # Force clear references regardless
+            self._training_thread = None
+            self._training_worker = None
+            
+            # Disconnect all signals to prevent issues during shutdown
+            try:
+                self.blockSignals(True)
             except RuntimeError:
                 pass  # Qt object already deleted
             
+            # Process events to ensure cleanup operations complete
             try:
-                if hasattr(self, '_training_thread') and self._training_thread:
-                    if self._training_thread.isRunning():
-                        self._training_thread.quit()
-                        # Give it more time to clean up properly
-                        if not self._training_thread.wait(3000):  # Wait up to 3 seconds
-                            self._training_thread.terminate()
-                            self._training_thread.wait(1000)  # Wait for termination
-                    
-                    # Clean up thread objects
-                    self._training_thread.deleteLater()
-                    self._training_thread = None
-            except RuntimeError:
-                pass  # Qt object already deleted
-            
-            try:
-                if hasattr(self, '_training_worker') and self._training_worker:
-                    self._training_worker.deleteLater()
-                    self._training_worker = None
-            except RuntimeError:
-                pass  # Qt object already deleted
+                from PySide6.QtWidgets import QApplication
+                app = QApplication.instance()
+                if app:
+                    # Multiple event processing rounds for thorough cleanup
+                    for _ in range(5):
+                        app.processEvents()
+            except Exception:
+                pass
                 
         except Exception as e:
-            # Suppress cleanup warnings during shutdown
-            pass
+            # Log cleanup warnings during shutdown but ensure references are cleared
+            print(f"Cleanup warning: {e}")
+            self._training_thread = None
+            self._training_worker = None
     
     def __del__(self):
         """Destructor to ensure proper cleanup."""

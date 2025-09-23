@@ -152,7 +152,7 @@ class RLConfig:
     
     # Early stopping configuration
     enable_early_stopping: bool = True
-    early_stop_patience: int = 5  # Number of successful episodes without improvement to wait
+    early_stop_patience: int = 50  # Number of successful episodes without improvement to wait
     min_improvement_threshold: float = 0.05  # Minimum time improvement (5%) to consider as progress
 
 

@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready - Click to place walls, use controls to run A* | Press 'Q' to quit, Space to step, Enter to run")
+        self.status_bar.showMessage("Ready - Click to place walls, use controls to run A* | Press 'Q' to quit, Space to step, Enter to run, Ctrl+S to save maze, Ctrl+O to load maze")
     
     def _create_controls(self) -> QHBoxLayout:
         """Create the control panel."""
@@ -118,9 +118,15 @@ class MainWindow(QMainWindow):
         self.maze_type_combo.setCurrentIndex(0)
         self.maze_grid_btn = QPushButton("Generate")
         
+        # Maze save/load controls
+        self.save_maze_btn = QPushButton("Save Maze")
+        self.load_maze_btn = QPushButton("Load Maze")
+        
         grid_layout.addWidget(self.new_grid_btn)
         grid_layout.addWidget(self.maze_type_combo)
         grid_layout.addWidget(self.maze_grid_btn)
+        grid_layout.addWidget(self.save_maze_btn)
+        grid_layout.addWidget(self.load_maze_btn)
         
         # Edit mode
         edit_group = QGroupBox("Edit Mode")
@@ -268,6 +274,8 @@ class MainWindow(QMainWindow):
         # Grid controls
         self.new_grid_btn.clicked.connect(self._on_new_grid)
         self.maze_grid_btn.clicked.connect(self._on_maze_grid)
+        self.save_maze_btn.clicked.connect(self._on_save_maze)
+        self.load_maze_btn.clicked.connect(self._on_load_maze)
         
         # Edit mode
         self.wall_radio.toggled.connect(lambda: self._set_edit_mode("wall"))
@@ -294,6 +302,8 @@ class MainWindow(QMainWindow):
         # Grid controls
         QShortcut(QKeySequence("Ctrl+N"), self, self._on_new_grid)
         QShortcut(QKeySequence("Ctrl+M"), self, self._on_maze_grid)
+        QShortcut(QKeySequence("Ctrl+S"), self, self._on_save_maze)
+        QShortcut(QKeySequence("Ctrl+O"), self, self._on_load_maze)
         
         # Application controls
         QShortcut(QKeySequence("Q"), self, self.close)
@@ -351,6 +361,77 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Generated: Branching Maze (many decision points!)")
         
         self._reset_statistics()
+    
+    def _on_save_maze(self):
+        """Handle save maze button click."""
+        if not self.controller.grid:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No Maze", "Please generate or create a maze first.")
+            return
+        
+        # Import maze management functions
+        try:
+            from ui.maze_manager import show_save_maze_dialog
+            
+            # Determine generation method based on current selection
+            generation_method = self.maze_type_combo.currentText()
+            
+            # Show save dialog
+            show_save_maze_dialog(
+                self.controller.grid,
+                self.controller.start_coord,
+                self.controller.target_coord,
+                generation_method,
+                self
+            )
+        except ImportError as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Import Error", f"Could not import maze manager: {e}")
+    
+    def _on_load_maze(self):
+        """Handle load maze button click."""
+        try:
+            from ui.maze_manager import show_maze_manager_dialog
+            from utils.maze_serialization import apply_maze_to_grid
+            
+            # Show maze manager dialog
+            maze_data = show_maze_manager_dialog(self)
+            
+            if maze_data:
+                # Create a new grid with the right dimensions
+                from ..domain.grid_factory import create_empty_grid
+                new_grid = create_empty_grid(maze_data.width, maze_data.height)
+                
+                # Apply the loaded maze to the grid
+                apply_maze_to_grid(maze_data, new_grid)
+                
+                # Update controller with new grid and coordinates
+                self.controller._grid = new_grid
+                self.controller._start_coord = maze_data.start
+                self.controller._target_coord = maze_data.target
+                
+                # Reset algorithm state
+                self.controller.reset_algorithm()
+                
+                # Update UI
+                self.width_spin.setValue(maze_data.width)
+                self.height_spin.setValue(maze_data.height)
+                self.controller.grid_updated.emit()
+                
+                # Reset statistics
+                self._reset_statistics()
+                
+                # Show success message
+                from PySide6.QtWidgets import QMessageBox
+                maze_name = maze_data.name or f"Maze {maze_data.width}x{maze_data.height}"
+                QMessageBox.information(self, "Maze Loaded", f"Successfully loaded '{maze_name}'!")
+                
+        except ImportError as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Import Error", f"Could not import maze manager: {e}")
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Load Error", f"Failed to load maze: {str(e)}")
     
     def _set_edit_mode(self, mode: str):
         """Set the grid edit mode."""
@@ -476,12 +557,35 @@ Algorithm Configuration:
 • Q/Esc: Quit application
 • Ctrl+N: New empty grid
 • Ctrl+M: Generate maze
+• Ctrl+S: Save current maze
+• Ctrl+O: Load saved maze
 """
         
         self.stats_display.setText(stats_text)
     
     def closeEvent(self, event):
-        """Handle application close event."""
-        # Reset algorithm before closing to clean up any timers
-        self.controller.reset_algorithm()
-        event.accept()
+        """Handle application close event with thorough cleanup."""
+        try:
+            # Reset algorithm before closing to clean up any timers
+            self.controller.reset_algorithm()
+            
+            # Ensure all timers and controllers are properly cleaned up
+            if hasattr(self.controller, '_timer') and self.controller._timer:
+                self.controller._timer.stop()
+            
+            # Process events to ensure cleanup operations complete
+            try:
+                from PySide6.QtWidgets import QApplication
+                app = QApplication.instance()
+                if app:
+                    # Process any pending deleteLater() calls multiple times
+                    for _ in range(3):
+                        app.processEvents()
+            except Exception:
+                pass
+            
+            event.accept()
+            
+        except Exception:
+            # Suppress any errors during shutdown and still close
+            event.accept()

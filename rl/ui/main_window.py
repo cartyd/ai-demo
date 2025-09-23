@@ -155,9 +155,13 @@ class MainWindow(QMainWindow):
         
         self.new_grid_btn = QPushButton("Empty Grid")
         self.maze_btn = QPushButton("Generate Maze")
+        self.save_maze_btn = QPushButton("Save Maze")
+        self.load_maze_btn = QPushButton("Load Maze")
         
         grid_layout.addWidget(self.new_grid_btn)
         grid_layout.addWidget(self.maze_btn)
+        grid_layout.addWidget(self.save_maze_btn)
+        grid_layout.addWidget(self.load_maze_btn)
         
         # Edit mode
         edit_group = QGroupBox("Edit Mode")
@@ -440,6 +444,8 @@ class MainWindow(QMainWindow):
         
         self.new_grid_btn.clicked.connect(self._on_new_grid_clicked)
         self.maze_btn.clicked.connect(self._on_maze_clicked)
+        self.save_maze_btn.clicked.connect(self._on_save_maze)
+        self.load_maze_btn.clicked.connect(self._on_load_maze)
         
         # Parameter updates
         self.lr_spin.valueChanged.connect(self._on_params_changed)
@@ -472,6 +478,8 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("T"), self, self._on_train_clicked)
         QShortcut(QKeySequence("Space"), self, self._on_test_clicked)
         QShortcut(QKeySequence("R"), self, self._on_reset_clicked)
+        QShortcut(QKeySequence("Ctrl+S"), self, self._on_save_maze)
+        QShortcut(QKeySequence("Ctrl+O"), self, self._on_load_maze)
     
     def _on_state_changed(self, state: RLState):
         """Handle state changes."""
@@ -502,6 +510,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(self.current_episode)
         self._update_statistics_display()
         self._update_training_rate()
+        self._update_episode_timing_display()  # Update timing displays
         
         # Reset episode start time for next episode
         self.current_episode_start_time = time.time()
@@ -514,11 +523,13 @@ class MainWindow(QMainWindow):
         if self.progress_bar.maximum() != total_episodes:
             self.progress_bar.setMaximum(total_episodes)
         self._update_training_rate()
+        self._update_episode_timing_display()  # Update timing displays
     
     def _on_training_completed(self, result):
         """Handle training completion."""
         self.progress_group.setVisible(False)
         self._update_statistics_display()
+        self._update_episode_timing_display()  # Update timing displays
         
         # Calculate elapsed time for completion message
         elapsed_time = ""
@@ -607,6 +618,71 @@ class MainWindow(QMainWindow):
         height = self.height_spin.value()
         self.controller.generate_maze_grid(width, height)
     
+    def _on_save_maze(self):
+        """Handle save maze button click."""
+        if not self.controller.grid:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No Maze", "Please generate or create a maze first.")
+            return
+        
+        # Import maze management functions
+        try:
+            from ui.maze_manager import show_save_maze_dialog
+            
+            # Show save dialog (RL mazes are typically generated, so use "Generated Maze" as default)
+            show_save_maze_dialog(
+                self.controller.grid,
+                self.controller.start_coord,
+                self.controller.target_coord,
+                "Generated Maze",
+                self
+            )
+        except ImportError as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Import Error", f"Could not import maze manager: {e}")
+    
+    def _on_load_maze(self):
+        """Handle load maze button click."""
+        try:
+            from ui.maze_manager import show_maze_manager_dialog
+            from utils.maze_serialization import apply_maze_to_grid
+            
+            # Show maze manager dialog
+            maze_data = show_maze_manager_dialog(self)
+            
+            if maze_data:
+                # Create a new grid with the right dimensions
+                from ..utils.grid_factory import create_empty_grid
+                new_grid = create_empty_grid(maze_data.width, maze_data.height)
+                
+                # Apply the loaded maze to the grid
+                apply_maze_to_grid(maze_data, new_grid)
+                
+                # Update controller with new grid and coordinates
+                self.controller._grid = new_grid
+                self.controller._start_coord = maze_data.start
+                self.controller._target_coord = maze_data.target
+                
+                # Reset algorithm state and Q-values
+                self.controller.reset_algorithm()
+                
+                # Update UI
+                self.width_spin.setValue(maze_data.width)
+                self.height_spin.setValue(maze_data.height)
+                self.controller.grid_updated.emit()
+                
+                # Show success message
+                from PySide6.QtWidgets import QMessageBox
+                maze_name = maze_data.name or f"Maze {maze_data.width}x{maze_data.height}"
+                QMessageBox.information(self, "Maze Loaded", f"Successfully loaded '{maze_name}' for RL training!")
+                
+        except ImportError as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Import Error", f"Could not import maze manager: {e}")
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Load Error", f"Failed to load maze: {str(e)}")
+    
     def _on_params_changed(self):
         """Handle parameter changes."""
         # Update controller config
@@ -616,7 +692,7 @@ class MainWindow(QMainWindow):
         )
     
     def _on_training_mode_changed(self):
-        """Handle training mode change."""
+        """Handle training mode change, including during active training."""
         if self.visual_radio.isChecked():
             mode = "visual"
             self.speed_slider.setEnabled(True)
@@ -624,7 +700,15 @@ class MainWindow(QMainWindow):
             mode = "background"
             self.speed_slider.setEnabled(False)
         
+        # Check if training is currently active
+        was_training = self.controller.current_state == RLState.TRAINING
+        
         self.controller.update_config(training_mode=mode)
+        
+        # If training was active, handle the mode transition
+        if was_training:
+            self.controller.handle_training_mode_transition(mode)
+        
         self._update_button_states()
     
     def _on_speed_changed(self, value: int):
@@ -797,7 +881,7 @@ class MainWindow(QMainWindow):
         elif self.controller.current_state == RLState.CONVERGED:
             self.status_bar.showMessage("Training converged! Click 'Test' to see the learned path")
         else:
-            self.status_bar.showMessage("Ready! Maze loaded with mouse🐭 and cheese🧀 - Click 'Train' to start Q-Learning | Press 'Q' to quit")
+            self.status_bar.showMessage("Ready! Maze loaded with mouse🐭 and cheese🧀 - Click 'Train' to start Q-Learning | Press 'Q' to quit, Ctrl+S to save maze, Ctrl+O to load maze")
     
     def _update_statistics_display(self):
         """Update statistics display."""
@@ -895,22 +979,71 @@ class MainWindow(QMainWindow):
             return "#CC0000"  # Dark red - insufficient
     
     def closeEvent(self, event: QCloseEvent):
-        """Handle application close event with proper cleanup."""
+        """Handle application close event with thorough cleanup to prevent thread contamination."""
         try:
             # Stop the elapsed timer (handle Qt object deletion gracefully)
             try:
                 if hasattr(self, 'elapsed_timer') and self.elapsed_timer:
                     self.elapsed_timer.stop()
+                    self.elapsed_timer.deleteLater()
             except RuntimeError:
                 pass  # Timer already deleted by Qt
             
-            # Clean up controller resources (threads, timers, etc.)
+            # Clean up controller resources (threads, timers, etc.) and wait for completion
             if hasattr(self, 'controller') and self.controller:
+                print("Cleaning up controller resources...")
                 self.controller.cleanup()
+                
+                # Additional safety check: ensure training thread is really stopped
+                if (hasattr(self.controller, '_training_thread') and 
+                    self.controller._training_thread and 
+                    self.controller._training_thread.isRunning()):
+                    print("Warning: Training thread still running after cleanup, waiting...")
+                    # Give it a bit more time to terminate
+                    import time
+                    for attempt in range(20):  # Up to 200ms total
+                        if not self.controller._training_thread.isRunning():
+                            break
+                        time.sleep(0.01)  # 10ms increments
+                        if attempt % 5 == 0:  # Every 50ms
+                            print(f"Still waiting for thread termination (attempt {attempt + 1})")
+                    
+                    # Final check
+                    if self.controller._training_thread.isRunning():
+                        print("Error: Thread still running, this may cause an abort trap")
+                        # Force immediate termination as last resort
+                        self.controller._training_thread.terminate()
+                        self.controller._training_thread.wait(50)
+            
+            # Force cleanup of all child widgets and process events multiple times
+            try:
+                # Get the QApplication instance
+                app = self.parent() if self.parent() else None
+                if not app:
+                    from PySide6.QtWidgets import QApplication
+                    app = QApplication.instance()
+                
+                if app:
+                    # Process any pending deleteLater() calls multiple times
+                    print("Processing Qt events for cleanup...")
+                    for i in range(10):  # More iterations for thorough cleanup
+                        app.processEvents()
+                        if i == 4:  # Brief pause in the middle
+                            import time
+                            time.sleep(0.01)
+                    
+                    # Final event processing after a brief wait
+                    import time
+                    time.sleep(0.02)  # 20ms wait
+                    app.processEvents()
+                    print("Qt cleanup completed")
+            except Exception as e:
+                print(f"Qt cleanup error: {e}")
             
             # Accept the close event
             event.accept()
             
-        except Exception:
+        except Exception as e:
             # Suppress any errors during shutdown and still close
+            print(f"Close event error: {e}")
             event.accept()
