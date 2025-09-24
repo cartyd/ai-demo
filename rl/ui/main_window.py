@@ -133,8 +133,8 @@ class MainWindow(QMainWindow):
         episodes_layout = QVBoxLayout()
         episodes_layout.addWidget(QLabel("Episodes"))
         self.episodes_spin = QSpinBox()
-        self.episodes_spin.setRange(10, 10000)  # Extended range for complex mazes
-        self.episodes_spin.setValue(5000)  # Higher default for better learning
+        self.episodes_spin.setRange(10, 15000)  # Extended range for very complex mazes
+        self.episodes_spin.setValue(8000)  # Higher default for complex maze learning
         episodes_layout.addWidget(self.episodes_spin)
         
         # Grid controls
@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
         eps_layout.addWidget(QLabel("Epsilon:"))
         self.eps_spin = QSpinBox()
         self.eps_spin.setRange(1, 50)
-        self.eps_spin.setValue(30)  # 0.3 - Higher exploration for complex mazes
+        self.eps_spin.setValue(40)  # 0.4 - Even higher exploration for very complex mazes
         self.eps_spin.setSuffix(" (×0.01)")
         eps_layout.addWidget(self.eps_spin)
         params_layout.addLayout(eps_layout)

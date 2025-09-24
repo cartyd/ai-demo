@@ -116,13 +116,13 @@ class Grid:
 @dataclass
 class RLConfig:
     """Configuration for the RL algorithm."""
-    learning_rate: float = 0.1
-    discount_factor: float = 0.95  # Increased for long-term rewards (50-step paths)
-    epsilon: float = 0.3  # Higher initial exploration for complex mazes
-    epsilon_decay: float = 0.9995  # Slower decay to maintain exploration longer
-    epsilon_min: float = 0.05  # Higher minimum to maintain some exploration
-    max_episodes: int = 5000  # More episodes for complex maze learning
-    max_steps_per_episode: int = 300  # Higher limit for exploration + optimal path
+    learning_rate: float = 0.15  # Faster learning for complex mazes
+    discount_factor: float = 0.98  # Very high for 50-step paths
+    epsilon: float = 0.4  # Even higher initial exploration
+    epsilon_decay: float = 0.9998  # Much slower decay
+    epsilon_min: float = 0.08  # Higher minimum exploration
+    max_episodes: int = 8000  # More episodes for very complex mazes
+    max_steps_per_episode: int = 500  # Much higher limit for deep exploration
     reward_goal: float = 100.0
     reward_wall: float = -10.0
     reward_step: float = -0.5  # Reduced step penalty for long paths
@@ -133,14 +133,14 @@ class RLConfig:
     visual_step_delay: int = 300  # milliseconds between steps in visual mode
     visual_episode_delay: int = 1000  # milliseconds between episodes in visual mode
     
-    # Smart reward system
+    # Smart reward system - optimized for complex mazes
     use_smart_rewards: bool = True
-    reward_progress: float = 3.0  # Reward for getting closer to goal (increased)
-    reward_exploration: float = 0.5  # Bonus for visiting new states
-    reward_dead_end: float = -20.0  # Penalty for entering dead ends
-    reward_revisit: float = -5.0  # Penalty for revisiting states in same episode (increased)
-    reward_stuck: float = -15.0  # Penalty for being stuck (no progress)
-    reward_backward: float = -3.0  # Penalty for moving away from goal (new)
+    reward_progress: float = 5.0  # Higher reward for getting closer to goal
+    reward_exploration: float = 1.0  # Strong bonus for visiting new states
+    reward_dead_end: float = -15.0  # Less harsh penalty to allow exploration
+    reward_revisit: float = -2.0  # Lighter penalty for revisiting (needed in complex mazes)
+    reward_stuck: float = -10.0  # Lighter penalty for being stuck
+    reward_backward: float = -1.0  # Very light penalty for moving away
     
     # Distance-based guidance
     use_distance_guidance: bool = True
