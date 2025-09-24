@@ -371,6 +371,14 @@ class MainWindow(QMainWindow):
         
         # Import maze management functions
         try:
+            import sys
+            from pathlib import Path
+            
+            # Add project root to path if not already there
+            project_root = Path(__file__).parent.parent.parent
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+            
             from ui.maze_manager import show_save_maze_dialog
             
             # Determine generation method based on current selection
@@ -391,6 +399,14 @@ class MainWindow(QMainWindow):
     def _on_load_maze(self):
         """Handle load maze button click."""
         try:
+            import sys
+            from pathlib import Path
+            
+            # Add project root to path if not already there
+            project_root = Path(__file__).parent.parent.parent
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+            
             from ui.maze_manager import show_maze_manager_dialog
             from utils.maze_serialization import apply_maze_to_grid
             
@@ -399,7 +415,7 @@ class MainWindow(QMainWindow):
             
             if maze_data:
                 # Create a new grid with the right dimensions
-                from ..domain.grid_factory import create_empty_grid
+                from astar.utils.grid_factory import create_empty_grid
                 new_grid = create_empty_grid(maze_data.width, maze_data.height)
                 
                 # Apply the loaded maze to the grid

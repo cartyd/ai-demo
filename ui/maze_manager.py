@@ -11,10 +11,24 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
-from ..utils.maze_serialization import (
-    MazeData, save_maze, load_maze, list_saved_mazes, delete_maze,
-    generate_maze_filename, extract_maze_from_grid
-)
+# Import maze serialization utilities with proper path handling
+try:
+    from utils.maze_serialization import (
+        MazeData, save_maze, load_maze, list_saved_mazes, delete_maze,
+        generate_maze_filename, extract_maze_from_grid
+    )
+except ImportError:
+    import sys
+    from pathlib import Path
+    
+    # Add project root to path
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from utils.maze_serialization import (
+        MazeData, save_maze, load_maze, list_saved_mazes, delete_maze,
+        generate_maze_filename, extract_maze_from_grid
+    )
 
 
 class SaveMazeDialog(QDialog):
