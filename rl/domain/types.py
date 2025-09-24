@@ -128,6 +128,8 @@ class RLConfig:
     reward_step: float = -0.5  # Reduced step penalty for long paths
     step_mode: bool = False
     show_q_values: bool = True
+    # Testing configuration
+    instant_testing: bool = True  # Show complete path immediately vs step-by-step
     # Visual training configuration
     training_mode: TrainingMode = "background"
     visual_step_delay: int = 300  # milliseconds between steps in visual mode

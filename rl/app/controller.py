@@ -700,10 +700,7 @@ class RLController(QObject):
                 # Option 1: Instant testing - show complete path immediately
                 # Option 2: Step-by-step visualization for demonstration
                 
-                # For now, default to instant testing for better UX
-                instant_testing = True  # TODO: Make this configurable via UI
-                
-                if instant_testing:
+                if self._config.instant_testing:
                     # Show complete path immediately
                     self._complete_testing()
                 else:

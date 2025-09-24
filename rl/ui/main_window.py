@@ -232,6 +232,15 @@ class MainWindow(QMainWindow):
         self.distance_guidance_cb.setToolTip("Bias actions toward goal direction")
         smart_layout.addWidget(self.distance_guidance_cb)
         
+        # Testing options
+        testing_group = QGroupBox("Testing")
+        testing_layout = QVBoxLayout(testing_group)
+        
+        self.instant_testing_cb = QCheckBox("Instant Testing")
+        self.instant_testing_cb.setChecked(True)
+        self.instant_testing_cb.setToolTip("Show complete path immediately instead of step-by-step visualization")
+        testing_layout.addWidget(self.instant_testing_cb)
+        
         # Add all groups to main layout
         layout.addWidget(rl_group)
         layout.addLayout(episodes_layout)
@@ -240,6 +249,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(params_group)
         layout.addWidget(viz_group)
         layout.addWidget(smart_group)
+        layout.addWidget(testing_group)
         layout.addStretch()
         
         return layout
@@ -471,6 +481,9 @@ class MainWindow(QMainWindow):
         self.smart_rewards_cb.toggled.connect(self._on_smart_ai_changed)
         self.dead_end_detection_cb.toggled.connect(self._on_smart_ai_changed)
         self.distance_guidance_cb.toggled.connect(self._on_smart_ai_changed)
+        
+        # Testing controls
+        self.instant_testing_cb.toggled.connect(self._on_testing_options_changed)
     
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts."""
@@ -785,6 +798,12 @@ class MainWindow(QMainWindow):
             use_smart_rewards=self.smart_rewards_cb.isChecked(),
             detect_dead_ends=self.dead_end_detection_cb.isChecked(),
             use_distance_guidance=self.distance_guidance_cb.isChecked()
+        )
+    
+    def _on_testing_options_changed(self):
+        """Handle testing options change."""
+        self.controller.update_config(
+            instant_testing=self.instant_testing_cb.isChecked()
         )
     
     def _update_elapsed_time(self):
