@@ -398,6 +398,11 @@ class MainWindow(QMainWindow):
     
     def _on_load_maze(self):
         """Handle load maze button click."""
+        # Set waiting cursor
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         try:
             import sys
             from pathlib import Path
@@ -410,16 +415,28 @@ class MainWindow(QMainWindow):
             from ui.maze_manager import show_maze_manager_dialog
             from utils.maze_serialization import apply_maze_to_grid
             
+            # Restore cursor before showing dialog
+            QApplication.restoreOverrideCursor()
+            
             # Show maze manager dialog
             maze_data = show_maze_manager_dialog(self)
             
             if maze_data:
+                # Set waiting cursor for loading operation
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                
+                print(f"Loading maze: {maze_data.name} ({maze_data.width}x{maze_data.height})")
+                
                 # Create a new grid with the right dimensions
                 from astar.utils.grid_factory import create_empty_grid
                 new_grid = create_empty_grid(maze_data.width, maze_data.height)
                 
                 # Apply the loaded maze to the grid
                 apply_maze_to_grid(maze_data, new_grid)
+                
+                # Reset algorithm first if running
+                if self.controller.current_state != AlgoState.IDLE:
+                    self.controller.reset_algorithm()
                 
                 # Update controller with new grid and coordinates
                 self.controller._grid = new_grid
@@ -429,25 +446,46 @@ class MainWindow(QMainWindow):
                 # Reset algorithm state
                 self.controller.reset_algorithm()
                 
-                # Update UI
+                # Update UI controls
                 self.width_spin.setValue(maze_data.width)
                 self.height_spin.setValue(maze_data.height)
-                self.controller.grid_updated.emit()
                 
                 # Reset statistics
                 self._reset_statistics()
+                
+                # Force refresh of displays
+                self._update_statistics_display()
+                
+                # Emit grid update signal
+                self.controller.grid_updated.emit()
+                
+                # Process events to ensure UI updates
+                QApplication.processEvents()
+                
+                # Restore cursor
+                QApplication.restoreOverrideCursor()
                 
                 # Show success message
                 from PySide6.QtWidgets import QMessageBox
                 maze_name = maze_data.name or f"Maze {maze_data.width}x{maze_data.height}"
                 QMessageBox.information(self, "Maze Loaded", f"Successfully loaded '{maze_name}'!")
                 
+                print(f"Maze loaded successfully: {maze_name}")
+            else:
+                # Restore cursor if no maze was selected
+                QApplication.restoreOverrideCursor()
+                
         except ImportError as e:
+            QApplication.restoreOverrideCursor()
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Import Error", f"Could not import maze manager: {e}")
         except Exception as e:
+            QApplication.restoreOverrideCursor()
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Load Error", f"Failed to load maze: {str(e)}")
+            import traceback
+            print(f"Error loading maze: {e}")
+            traceback.print_exc()
     
     def _set_edit_mode(self, mode: str):
         """Set the grid edit mode."""

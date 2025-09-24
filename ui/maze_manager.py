@@ -132,7 +132,8 @@ class MazeManagerDialog(QDialog):
     
     def _setup_ui(self):
         """Setup the UI elements."""
-        layout = QHBoxLayout(self)
+        # Create main vertical layout
+        main_layout = QVBoxLayout(self)
         
         # Create splitter for resizable panes
         splitter = QSplitter(Qt.Horizontal)
@@ -193,7 +194,7 @@ class MazeManagerDialog(QDialog):
         
         # Set splitter proportions
         splitter.setSizes([400, 400])
-        layout.addWidget(splitter)
+        main_layout.addWidget(splitter)
         
         # Bottom buttons
         button_layout = QHBoxLayout()
@@ -210,10 +211,7 @@ class MazeManagerDialog(QDialog):
         button_layout.addWidget(self.close_btn)
         
         # Add button layout to main layout
-        main_layout = QVBoxLayout()
-        main_layout.addWidget(splitter)
         main_layout.addLayout(button_layout)
-        self.setLayout(main_layout)
     
     def _refresh_maze_list(self):
         """Refresh the list of saved mazes."""
@@ -293,7 +291,12 @@ class MazeManagerDialog(QDialog):
     def _load_selected_maze(self):
         """Load the selected maze."""
         if self.selected_maze_data is None:
+            QMessageBox.warning(self, "No Selection", "Please select a maze to load.")
             return
+        
+        # Debug information
+        maze_name = self.selected_maze_data.name or "Unnamed Maze"
+        print(f"Loading maze: {maze_name} ({self.selected_maze_data.width}x{self.selected_maze_data.height})")
         
         self.maze_selected.emit(self.selected_maze_data)
         self.accept()
