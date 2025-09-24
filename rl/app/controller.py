@@ -230,7 +230,7 @@ class RLController(QObject):
         # Timer for testing mode
         self._timer = QTimer()
         self._timer.timeout.connect(self._on_timer_tick)
-        self._timer_interval = 500  # milliseconds
+        self._timer_interval = 100  # milliseconds - faster testing visualization
         
         # Testing state
         self._current_test_path: Optional[List[Coord]] = None
@@ -697,10 +697,20 @@ class RLController(QObject):
                     self.error_occurred.emit("Could not transition to testing state")
                     return False
                 
-                # Start timer for step-by-step visualization
-                if not self._config.step_mode:
-                    self._timer.start(self._timer_interval)
-                    
+                # Option 1: Instant testing - show complete path immediately
+                # Option 2: Step-by-step visualization for demonstration
+                
+                # For now, default to instant testing for better UX
+                instant_testing = True  # TODO: Make this configurable via UI
+                
+                if instant_testing:
+                    # Show complete path immediately
+                    self._complete_testing()
+                else:
+                    # Start timer for step-by-step visualization
+                    if not self._config.step_mode:
+                        self._timer.start(self._timer_interval)
+                
                 # Emit initial grid update to show clean state
                 self.grid_updated.emit()
                 
