@@ -117,15 +117,15 @@ class Grid:
 class RLConfig:
     """Configuration for the RL algorithm."""
     learning_rate: float = 0.1
-    discount_factor: float = 0.9
-    epsilon: float = 0.1  # Exploration rate
-    epsilon_decay: float = 0.995
-    epsilon_min: float = 0.01
-    max_episodes: int = 1000
-    max_steps_per_episode: int = 1000
+    discount_factor: float = 0.95  # Increased for long-term rewards (50-step paths)
+    epsilon: float = 0.3  # Higher initial exploration for complex mazes
+    epsilon_decay: float = 0.9995  # Slower decay to maintain exploration longer
+    epsilon_min: float = 0.05  # Higher minimum to maintain some exploration
+    max_episodes: int = 5000  # More episodes for complex maze learning
+    max_steps_per_episode: int = 300  # Higher limit for exploration + optimal path
     reward_goal: float = 100.0
     reward_wall: float = -10.0
-    reward_step: float = -1.0
+    reward_step: float = -0.5  # Reduced step penalty for long paths
     step_mode: bool = False
     show_q_values: bool = True
     # Visual training configuration
@@ -152,8 +152,8 @@ class RLConfig:
     
     # Early stopping configuration
     enable_early_stopping: bool = True
-    early_stop_patience: int = 50  # Number of successful episodes without improvement to wait
-    min_improvement_threshold: float = 0.05  # Minimum time improvement (5%) to consider as progress
+    early_stop_patience: int = 100  # More patience for complex mazes
+    min_improvement_threshold: float = 0.02  # Smaller threshold (2%) for gradual improvement
 
 
 @dataclass
