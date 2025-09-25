@@ -119,8 +119,8 @@ class RLConfig:
     learning_rate: float = 0.15  # Faster learning for complex mazes
     discount_factor: float = 0.98  # Very high for 50-step paths
     epsilon: float = 0.4  # Even higher initial exploration
-    epsilon_decay: float = 0.9998  # Much slower decay
-    epsilon_min: float = 0.08  # Higher minimum exploration
+    epsilon_decay: float = 0.995  # Balanced faster decay for better convergence
+    epsilon_min: float = 0.03  # Lower minimum exploration
     max_episodes: int = 8000  # More episodes for very complex mazes
     max_steps_per_episode: int = 500  # Much higher limit for deep exploration
     reward_goal: float = 100.0
@@ -132,8 +132,8 @@ class RLConfig:
     instant_testing: bool = True  # Show complete path immediately vs step-by-step
     # Visual training configuration
     training_mode: TrainingMode = "background"
-    visual_step_delay: int = 300  # milliseconds between steps in visual mode
-    visual_episode_delay: int = 1000  # milliseconds between episodes in visual mode
+    visual_step_delay: int = 10   # milliseconds between steps in visual mode (ultra-fast!)
+    visual_episode_delay: int = 50  # milliseconds between episodes in visual mode (ultra-fast!)
     
     # Smart reward system - optimized for complex mazes
     use_smart_rewards: bool = True

@@ -236,6 +236,7 @@ class RLController(QObject):
         self._current_test_path: Optional[List[Coord]] = None
         self._current_test_step = 0
         self._testing_phase = "moving"  # "considering" or "moving"
+        self._testing_paused = False
         
         # Visual training state
         self._visual_episodes_remaining = 0
@@ -664,6 +665,61 @@ class RLController(QObject):
             self._visual_episode_active = False
         return self._state_machine.reset_to_idle()
     
+    def pause_testing(self) -> bool:
+        """Pause testing."""
+        if self._state_machine.is_testing():
+            self._testing_paused = True
+            self._timer.stop()
+            return self._state_machine.pause_testing({'was_testing': True})
+        return False
+    
+    def resume_testing(self) -> bool:
+        """Resume testing from paused state."""
+        if self._state_machine.is_paused():
+            self._testing_paused = False
+            # Only restart timer if not in instant testing mode and not in step mode
+            if not self._config.instant_testing and not self._config.step_mode:
+                self._timer.start(self._timer_interval)
+            return self._state_machine.resume_testing()
+        return False
+    
+    def stop_testing(self) -> bool:
+        """Stop testing completely."""
+        if self._state_machine.is_testing() or (self._state_machine.is_paused() and self._testing_paused):
+            self._timer.stop()
+            self._testing_paused = False
+            # Clear test path visualization
+            if self._grid:
+                self._reset_grid_for_testing()
+            self._current_test_path = None
+            self._current_test_step = 0
+            self._testing_phase = "moving"
+            self.grid_updated.emit()
+            return self._state_machine.reset_to_idle()
+        return False
+    
+    def _reset_grid_for_testing(self):
+        """Reset grid to clean state for testing - only show start, target, and walls."""
+        if not self._grid:
+            return
+        
+        # Reset all nodes to clean state, preserving only essential elements
+        for node in self._grid.nodes.values():
+            coord = node.coord
+            
+            # Preserve walls - they're part of the maze structure
+            if not node.walkable or node.state == "wall":
+                node.state = "wall"
+            # Preserve start position
+            elif coord == self._start_coord:
+                node.state = "start"
+            # Preserve target position  
+            elif coord == self._target_coord:
+                node.state = "target"
+            # Clear everything else to empty for clean testing display
+            else:
+                node.state = "empty"
+    
     def start_testing(self) -> bool:
         """Start testing the learned policy."""
         if not self.can_start_training():
@@ -676,9 +732,9 @@ class RLController(QObject):
             return False
         
         try:
-            # Clear any previous visualization states
+            # Clear ALL visualization states for clean testing display
             if self._grid:
-                self._grid.reset_visualization_states()
+                self._reset_grid_for_testing()
             
             # Reset testing state
             self._current_test_path = None
@@ -769,26 +825,11 @@ class RLController(QObject):
             return False
     
     def _show_decision_process(self, current_coord: Coord):
-        """Show the decision process by highlighting possible moves."""
-        from ..domain.types import ACTION_DELTAS
-        
-        # Get valid actions from current position
-        valid_actions = []
-        for action in range(4):
-            delta = ACTION_DELTAS[action]
-            next_pos = (current_coord[0] + delta[0], current_coord[1] + delta[1])
-            
-            if (self._grid.is_valid_coord(next_pos) and 
-                self._grid.get_node(next_pos) and 
-                self._grid.get_node(next_pos).is_passable()):
-                valid_actions.append((action, next_pos))
-        
-        # Highlight possible moves and show Q-values
-        for action, next_pos in valid_actions:
-            if next_pos != self._start_coord and next_pos != self._target_coord:
-                node = self._grid.get_node(next_pos)
-                if node and node.state not in ["current", "path", "optimal_path"]:
-                    self._grid.set_node_state(next_pos, "training_considering")
+        """Show the decision process by highlighting the current position only."""
+        # For clean testing visualization, just highlight current position without showing all possible moves
+        # This keeps the display focused on the actual path being taken
+        if current_coord != self._start_coord and current_coord != self._target_coord:
+            self._grid.set_node_state(current_coord, "current")
     
     def _clear_decision_highlights(self):
         """Clear decision process highlights."""
@@ -803,15 +844,15 @@ class RLController(QObject):
     
     def _complete_testing(self):
         """Complete testing and show final path."""
-        # Clear any decision highlights
-        self._clear_decision_highlights()
+        # Ensure completely clean background first
+        self._reset_grid_for_testing()
         
         if self._current_test_path:
             # Check if validation criteria are met to determine path highlighting
             validation_result = self._validate_training_data()
             path_state = "optimal_path" if validation_result[0] else "path"
             
-            # Mark entire path with appropriate state
+            # Mark entire path with appropriate state (clean background ensures focus on path)
             for coord in self._current_test_path:
                 if coord != self._start_coord and coord != self._target_coord:
                     self._grid.set_node_state(coord, path_state)
@@ -847,6 +888,7 @@ class RLController(QObject):
         self._current_test_path = None
         self._current_test_step = 0
         self._testing_phase = "moving"
+        self._testing_paused = False
         
         # Reset visual training state
         self._visual_episodes_remaining = 0
@@ -979,7 +1021,7 @@ class RLController(QObject):
     def _on_timer_tick(self):
         """Called on each timer tick during testing or visual training."""
         try:
-            if self._state_machine.is_testing():
+            if self._state_machine.is_testing() and not self._testing_paused:
                 if not self.step_testing():
                     # If step_testing returns False, stop the timer
                     self._timer.stop()
@@ -990,6 +1032,9 @@ class RLController(QObject):
                 elif self._config.training_mode == "background":
                     # If we switched to background mode but timer is still running, stop it
                     self._timer.stop()
+            elif self._state_machine.is_paused():
+                # Timer should be stopped when paused, but just in case
+                self._timer.stop()
         except Exception as e:
             self.error_occurred.emit(f"Timer tick error: {str(e)}")
             self._timer.stop()

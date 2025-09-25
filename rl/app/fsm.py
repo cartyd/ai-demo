@@ -27,8 +27,8 @@ class RLStateMachine:
         self._valid_transitions = {
             RLState.IDLE: {RLState.TRAINING, RLState.TESTING},
             RLState.TRAINING: {RLState.PAUSED, RLState.CONVERGED, RLState.ERROR, RLState.IDLE},
-            RLState.PAUSED: {RLState.TRAINING, RLState.IDLE},
-            RLState.TESTING: {RLState.IDLE, RLState.ERROR},
+            RLState.PAUSED: {RLState.TRAINING, RLState.TESTING, RLState.IDLE},  # Allow resume testing from pause
+            RLState.TESTING: {RLState.PAUSED, RLState.IDLE, RLState.ERROR},  # Allow pause during testing
             RLState.CONVERGED: {RLState.TESTING, RLState.IDLE, RLState.TRAINING},
             RLState.ERROR: {RLState.IDLE},
         }
@@ -86,9 +86,31 @@ class RLStateMachine:
         return self.transition(RLState.PAUSED, context)
     
     def resume(self, context: Optional[Dict] = None) -> bool:
-        """Resume training from paused state."""
+        """Resume from paused state."""
         if self.current_state == RLState.PAUSED:
-            return self.transition(RLState.TRAINING, context)
+            # Resume based on what was paused - check context or default to training
+            if context and context.get('resume_testing', False):
+                return self.transition(RLState.TESTING, context)
+            else:
+                return self.transition(RLState.TRAINING, context)
+        return False
+    
+    def pause_testing(self, context: Optional[Dict] = None) -> bool:
+        """Pause testing mode."""
+        if self.current_state == RLState.TESTING:
+            if context is None:
+                context = {}
+            context['was_testing'] = True
+            return self.transition(RLState.PAUSED, context)
+        return False
+    
+    def resume_testing(self, context: Optional[Dict] = None) -> bool:
+        """Resume testing from paused state."""
+        if self.current_state == RLState.PAUSED:
+            if context is None:
+                context = {}
+            context['resume_testing'] = True
+            return self.transition(RLState.TESTING, context)
         return False
     
     def start_testing(self, context: Optional[Dict] = None) -> bool:

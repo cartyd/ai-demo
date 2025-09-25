@@ -129,7 +129,13 @@ class GridTile(QGraphicsRectItem):
     
     def _update_q_value_display(self):
         """Update Q-value text display."""
-        if self.show_q_values and self.node.state in ["empty", "start", "target", "path", "optimal_path"]:
+        # For clean testing visualization, hide Q-values on path tiles
+        # Show Q-values only during training and on non-path tiles
+        should_show = (self.show_q_values and 
+                      self.node.state in ["empty", "start", "target", "training_current", 
+                                         "training_visited", "training_considering"])
+        
+        if should_show:
             q_values = self.node.q_values
             
             # Display Q-values for each action
@@ -154,7 +160,7 @@ class GridTile(QGraphicsRectItem):
                 else:
                     text_item.setVisible(False)
         else:
-            # Hide all Q-value texts
+            # Hide all Q-value texts for clean testing visualization
             for text_item in self._q_value_texts.values():
                 text_item.setVisible(False)
     

@@ -24,6 +24,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("RL Pathfinding Visualizer - Q-Learning Agent")
         self.setMinimumSize(1200, 800)
         
+        # Maze tracking
+        self.current_maze_name = "No Maze Loaded"
+        
         # Statistics tracking
         self.training_start_time = None
         self.current_episode = 0
@@ -44,6 +47,7 @@ class MainWindow(QMainWindow):
         # Initial state
         self._update_button_states()
         self._update_statistics_display()
+        self._update_maze_name_display()
         
     def _create_ui(self):
         """Create the user interface."""
@@ -52,6 +56,10 @@ class MainWindow(QMainWindow):
         
         # Main layout
         main_layout = QVBoxLayout(central_widget)
+        
+        # Maze info panel
+        maze_info_layout = self._create_maze_info_panel()
+        main_layout.addLayout(maze_info_layout)
         
         # Controls panel
         controls_layout = self._create_controls()
@@ -74,6 +82,22 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self._update_status_message()
+    
+    def _create_maze_info_panel(self) -> QHBoxLayout:
+        """Create the maze information panel."""
+        layout = QHBoxLayout()
+        
+        # Maze name label
+        maze_label = QLabel("Current Maze:")
+        maze_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(maze_label)
+        
+        self.maze_name_label = QLabel(self.current_maze_name)
+        self.maze_name_label.setStyleSheet("color: #0066CC; font-weight: bold; font-size: 12px;")
+        layout.addWidget(self.maze_name_label)
+        
+        layout.addStretch()
+        return layout
     
     def _create_controls(self) -> QHBoxLayout:
         """Create the control panel."""
@@ -104,13 +128,13 @@ class MainWindow(QMainWindow):
         speed_layout = QHBoxLayout()
         speed_layout.addWidget(QLabel("Speed:"))
         self.speed_slider = QSlider(Qt.Horizontal)
-        self.speed_slider.setRange(50, 1000)  # 50ms to 1000ms
-        self.speed_slider.setValue(300)  # Default 300ms
+        self.speed_slider.setRange(1, 1000)  # 1ms to 1000ms for maximum speed
+        self.speed_slider.setValue(100)  # Default 100ms (faster default)
         self.speed_slider.setEnabled(False)  # Disabled for background mode initially
         speed_layout.addWidget(self.speed_slider)
         
-        self.speed_label = QLabel("300ms")
-        self.speed_label.setMinimumWidth(50)
+        self.speed_label = QLabel("100ms (Fast)")
+        self.speed_label.setMinimumWidth(120)
         speed_layout.addWidget(self.speed_label)
         rl_layout.addLayout(speed_layout)
         
@@ -387,6 +411,12 @@ class MainWindow(QMainWindow):
         
         return legend_group
     
+    def _update_maze_name_display(self):
+        """Update the maze name display."""
+        if hasattr(self, 'maze_name_label'):
+            self.maze_name_label.setText(self.current_maze_name)
+            self.setWindowTitle(f"RL Pathfinding Visualizer - Q-Learning Agent - {self.current_maze_name}")
+    
     def _get_training_status(self) -> dict:
         """Get training status information for UI display."""
         # Call controller's validation method
@@ -523,7 +553,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(self.current_episode)
         self._update_statistics_display()
         self._update_training_rate()
-        self._update_episode_timing_display()  # Update timing displays
+        # Note: Timing statistics will be updated after training completion for accuracy
         
         # Reset episode start time for next episode
         self.current_episode_start_time = time.time()
@@ -536,13 +566,15 @@ class MainWindow(QMainWindow):
         if self.progress_bar.maximum() != total_episodes:
             self.progress_bar.setMaximum(total_episodes)
         self._update_training_rate()
-        self._update_episode_timing_display()  # Update timing displays
+        # Note: Timing statistics will be calculated after training completion
     
     def _on_training_completed(self, result):
         """Handle training completion."""
         self.progress_group.setVisible(False)
         self._update_statistics_display()
-        self._update_episode_timing_display()  # Update timing displays
+        
+        # Calculate final timing statistics from complete episode data
+        self._calculate_final_timing_statistics()
         
         # Calculate elapsed time for completion message
         elapsed_time = ""
@@ -595,19 +627,38 @@ class MainWindow(QMainWindow):
             self.controller.step_visual_training()
         elif self.controller.current_state == RLState.TESTING:
             self.controller.step_testing()
+        elif self.controller.current_state == RLState.PAUSED:
+            # Check if testing was paused and allow stepping
+            was_testing = getattr(self.controller, '_testing_paused', False)
+            if was_testing:
+                self.controller.step_testing()
     
     def _on_pause_clicked(self):
         """Handle pause button click."""
         if self.controller.current_state == RLState.TRAINING:
             self.controller.pause_training()
+        elif self.controller.current_state == RLState.TESTING:
+            self.controller.pause_testing()
         elif self.controller.current_state == RLState.PAUSED:
-            self.controller.resume_training()
+            # Check if testing was paused
+            was_testing = getattr(self.controller, '_testing_paused', False)
+            if was_testing:
+                self.controller.resume_testing()
+            else:
+                self.controller.resume_training()
     
     def _on_reset_clicked(self):
         """Handle reset button click."""
-        # Stop any ongoing training first
-        if self.controller.current_state in [RLState.TRAINING, RLState.PAUSED]:
-            self.controller.stop_training()
+        # Stop any ongoing operations first
+        if self.controller.current_state == RLState.TESTING:
+            self.controller.stop_testing()
+        elif self.controller.current_state in [RLState.TRAINING, RLState.PAUSED]:
+            # Check if testing was paused
+            was_testing = getattr(self.controller, '_testing_paused', False)
+            if was_testing:
+                self.controller.stop_testing()
+            else:
+                self.controller.stop_training()
         
         self.controller.reset_algorithm()
         self.current_episode = 0
@@ -616,7 +667,12 @@ class MainWindow(QMainWindow):
         self.current_episode_start_time = None
         self.elapsed_timer.stop()
         self._update_elapsed_time()
-        self._update_episode_timing_display()
+        
+        # Clear timing statistics
+        self.current_episode_time_label.setText("Current Episode: --:--")
+        self.best_episode_time_label.setText("Best Time: --:--")
+        self.worst_episode_time_label.setText("Worst Time: --:--")
+        self.avg_episode_time_label.setText("Avg Time: --:--")
     
     def _on_new_grid_clicked(self):
         """Handle new grid button click."""
@@ -624,12 +680,22 @@ class MainWindow(QMainWindow):
         height = self.height_spin.value()
         self.controller.create_new_grid(width, height)
         self.controller.place_random_start_target()
+        
+        # Update maze name display
+        self.current_maze_name = f"Empty Grid {width}x{height}"
+        self.maze_name_label.setText(self.current_maze_name)
+        self.setWindowTitle(f"RL Pathfinding Visualizer - Q-Learning Agent - {self.current_maze_name}")
     
     def _on_maze_clicked(self):
         """Handle maze generation button click."""
         width = self.width_spin.value()
         height = self.height_spin.value()
         self.controller.generate_maze_grid(width, height)
+        
+        # Update maze name display
+        self.current_maze_name = f"Generated Maze {width}x{height}"
+        self.maze_name_label.setText(self.current_maze_name)
+        self.setWindowTitle(f"RL Pathfinding Visualizer - Q-Learning Agent - {self.current_maze_name}")
     
     def _on_save_maze(self):
         """Handle save maze button click."""
@@ -737,6 +803,13 @@ class MainWindow(QMainWindow):
                 # Restore cursor
                 QApplication.restoreOverrideCursor()
                 
+                # Update maze name display
+                self.current_maze_name = maze_data.name or f"Maze {maze_data.width}x{maze_data.height}"
+                self.maze_name_label.setText(self.current_maze_name)
+                
+                # Update window title with maze name
+                self.setWindowTitle(f"RL Pathfinding Visualizer - Q-Learning Agent - {self.current_maze_name}")
+                
                 # Show success message
                 from PySide6.QtWidgets import QMessageBox
                 maze_name = maze_data.name or f"Maze {maze_data.width}x{maze_data.height}"
@@ -788,8 +861,23 @@ class MainWindow(QMainWindow):
         self._update_button_states()
     
     def _on_speed_changed(self, value: int):
-        """Handle speed slider change."""
-        self.speed_label.setText(f"{value}ms")
+        """Handle speed slider change with better formatting for ultra-fast speeds."""
+        if value <= 10:
+            self.speed_label.setText(f"{value}ms (Ultra-Fast)")
+            self.speed_label.setStyleSheet("color: #FF0000; font-weight: bold;")  # Red for ultra-fast
+        elif value <= 50:
+            self.speed_label.setText(f"{value}ms (Very Fast)")
+            self.speed_label.setStyleSheet("color: #FF6600; font-weight: bold;")  # Orange for very fast
+        elif value <= 100:
+            self.speed_label.setText(f"{value}ms (Fast)")
+            self.speed_label.setStyleSheet("color: #006600; font-weight: bold;")  # Green for fast
+        elif value <= 300:
+            self.speed_label.setText(f"{value}ms (Normal)")
+            self.speed_label.setStyleSheet("color: #000000; font-weight: normal;")  # Black for normal
+        else:
+            self.speed_label.setText(f"{value}ms (Slow)")
+            self.speed_label.setStyleSheet("color: #666666; font-weight: normal;")  # Gray for slow
+        
         self.controller.update_config(visual_step_delay=value)
     
     def _on_smart_ai_changed(self):
@@ -873,20 +961,14 @@ class MainWindow(QMainWindow):
         else:
             return f"{minutes:02d}:{secs:02d}"
     
-    def _update_episode_timing_display(self):
-        """Update episode timing displays."""
+    def _calculate_final_timing_statistics(self):
+        """Calculate final timing statistics from complete training data."""
         agent = self.controller.agent
         
-        # Current episode elapsed time
-        if self.current_episode_start_time is not None and self.controller.current_state == RLState.TRAINING:
-            current_elapsed = time.time() - self.current_episode_start_time
-            self.current_episode_time_label.setText(f"Current Episode: {self._format_time(current_elapsed)}")
-        else:
-            self.current_episode_time_label.setText("Current Episode: --:--")
-        
-        # Best, worst, and average times from completed episodes
+        # Get all successful episodes with valid timing data
         if agent.training_history:
-            successful_times = [ep.elapsed_time for ep in agent.training_history if ep.reached_goal and ep.elapsed_time > 0]
+            successful_times = [ep.elapsed_time for ep in agent.training_history 
+                              if ep.reached_goal and ep.elapsed_time > 0]
             
             if successful_times:
                 best_time = min(successful_times)
@@ -896,14 +978,37 @@ class MainWindow(QMainWindow):
                 self.best_episode_time_label.setText(f"Best Time: {self._format_time(best_time)}")
                 self.worst_episode_time_label.setText(f"Worst Time: {self._format_time(worst_time)}")
                 self.avg_episode_time_label.setText(f"Avg Time: {self._format_time(avg_time)}")
+                
+                # Also log statistics for debugging
+                print(f"Final timing statistics: {len(successful_times)} successful episodes")
+                print(f"  Best: {self._format_time(best_time)}")
+                print(f"  Worst: {self._format_time(worst_time)}")
+                print(f"  Average: {self._format_time(avg_time)}")
             else:
                 self.best_episode_time_label.setText("Best Time: --:--")
                 self.worst_episode_time_label.setText("Worst Time: --:--")
                 self.avg_episode_time_label.setText("Avg Time: --:--")
+                print("No successful episodes with valid timing data")
         else:
             self.best_episode_time_label.setText("Best Time: --:--")
             self.worst_episode_time_label.setText("Worst Time: --:--")
             self.avg_episode_time_label.setText("Avg Time: --:--")
+            print("No training history available")
+        
+        # Clear current episode time since training is done
+        self.current_episode_time_label.setText("Current Episode: --:--")
+    
+    def _update_episode_timing_display(self):
+        """Update episode timing displays - now mainly for current episode during training."""
+        # Current episode elapsed time (only during active training)
+        if self.current_episode_start_time is not None and self.controller.current_state == RLState.TRAINING:
+            current_elapsed = time.time() - self.current_episode_start_time
+            self.current_episode_time_label.setText(f"Current Episode: {self._format_time(current_elapsed)}")
+        else:
+            self.current_episode_time_label.setText("Current Episode: --:--")
+        
+        # Note: Best/worst/avg times are now calculated only after training completion
+        # This ensures we have complete data rather than throttled episode updates
     
     def _update_button_states(self):
         """Update button enabled states based on current state."""
@@ -933,9 +1038,24 @@ class MainWindow(QMainWindow):
         else:
             self.test_btn.setToolTip("Test the learned policy")
         
+        # Step button: enabled for visual training or step-by-step testing
         self.step_btn.setEnabled((is_training and is_visual_mode) or (is_testing and self.controller.config.step_mode))
-        self.pause_btn.setEnabled(is_training or is_paused)
-        self.pause_btn.setText("Resume" if is_paused else "Pause")
+        
+        # Pause button: enabled for training, testing, or when paused
+        pause_enabled = is_training or is_testing or is_paused
+        self.pause_btn.setEnabled(pause_enabled)
+        
+        # Pause button text depends on current state and what was paused
+        if is_paused:
+            # Check if testing was paused by looking at controller state
+            was_testing = getattr(self.controller, '_testing_paused', False)
+            self.pause_btn.setText("Resume Testing" if was_testing else "Resume")
+        elif is_testing:
+            self.pause_btn.setText("Pause")
+        else:
+            self.pause_btn.setText("Pause")
+        
+        # Reset button: enabled when not actively testing (but allow when testing is paused)
         self.reset_btn.setEnabled(not is_testing)
         
         # Update status message
@@ -957,9 +1077,14 @@ class MainWindow(QMainWindow):
             else:
                 self.status_bar.showMessage(f"{mode} training starting...")
         elif self.controller.current_state == RLState.PAUSED:
-            self.status_bar.showMessage("Training paused - Click 'Resume' to continue")
+            # Check if testing was paused
+            was_testing = getattr(self.controller, '_testing_paused', False)
+            if was_testing:
+                self.status_bar.showMessage("Testing paused - Click 'Resume Testing' to continue or 'Reset' to cancel")
+            else:
+                self.status_bar.showMessage("Training paused - Click 'Resume' to continue")
         elif self.controller.current_state == RLState.TESTING:
-            self.status_bar.showMessage("Testing learned policy...")
+            self.status_bar.showMessage("Testing learned policy... (Click 'Pause' to pause or 'Reset' to cancel)")
         elif self.controller.current_state == RLState.CONVERGED:
             self.status_bar.showMessage("Training converged! Click 'Test' to see the learned path")
         else:
