@@ -484,7 +484,10 @@ class QLearningAgent:
         
         print(f"Starting background training from episode {self.episodes_completed}...")
         
-        for episode_num in range(self.episodes_completed, max_episodes):
+        episode_num = self.episodes_completed
+        max_training_episodes = max(max_episodes * 3, 10000)  # Allow much longer training if needed
+        
+        while episode_num < max_training_episodes:
             episode_start_time = time.time()
             episode = self.train_episode(env)
             episode.elapsed_time = time.time() - episode_start_time
@@ -496,21 +499,34 @@ class QLearningAgent:
             
             # Update training history
             self.training_history = episodes_list
-            self.episodes_completed = episode_num + 1
+            episode_num += 1
+            self.episodes_completed = episode_num
             
             # Check for checkpointing
-            if checkpoint_callback and (episode_num + 1) % checkpoint_interval == 0:
+            if checkpoint_callback and episode_num % checkpoint_interval == 0:
                 agent_state = self.get_agent_state()
-                checkpoint_callback(episode_num + 1, agent_state)
+                checkpoint_callback(episode_num, agent_state)
             
             # Print progress occasionally
-            if (episode_num + 1) % 50 == 0:
+            if episode_num % 50 == 0:
                 recent_episodes = episodes_list[-50:]
                 recent_success = sum(1 for ep in recent_episodes if ep.reached_goal)
                 recent_success_rate = recent_success / len(recent_episodes)
-                print(f"Episode {episode_num + 1}: Success rate: {recent_success_rate:.1%}, Epsilon: {self.epsilon:.3f}")
+                print(f"Episode {episode_num}: Success rate: {recent_success_rate:.1%}, Epsilon: {self.epsilon:.3f}")
             
-            # Early stopping check
+            # Check for convergence (after minimum episodes completed)
+            if len(episodes_list) >= 100 and episode_num >= max_episodes:
+                recent_100_episodes = episodes_list[-100:]
+                recent_success = sum(1 for ep in recent_100_episodes if ep.reached_goal)
+                current_success_rate = recent_success / 100
+                
+                # Converged if success rate is 95% or higher
+                if current_success_rate >= 0.95:
+                    print(f"Training converged at episode {episode_num}! Success rate: {current_success_rate:.1%} over last 100 episodes.")
+                    self.training_phase = "converged"
+                    break
+            
+            # Early stopping check (original logic for performance plateau)
             if self.config.enable_early_stopping and len(episodes_list) >= 100:
                 recent_100_episodes = episodes_list[-100:]
                 recent_success = sum(1 for ep in recent_100_episodes if ep.reached_goal)
@@ -522,8 +538,9 @@ class QLearningAgent:
                 else:
                     episodes_without_improvement += 1
                 
-                if episodes_without_improvement >= self.config.early_stop_patience:
-                    print(f"Early stopping at episode {episode_num + 1}. No improvement for {episodes_without_improvement} episodes.")
+                # Only stop early if we haven't reached minimum episodes yet
+                if episode_num < max_episodes and episodes_without_improvement >= self.config.early_stop_patience:
+                    print(f"Early stopping at episode {episode_num}. No improvement for {episodes_without_improvement} episodes.")
                     break
         
         # Calculate final statistics

@@ -96,9 +96,13 @@ class TrainingWorker(QObject):
             episodes_list = []
             successful_episodes = 0
             early_stopped = False
+            converged = False
             stopping_reason = ""
             
-            for episode_num in range(self.episodes):
+            episode_num = 0
+            max_training_episodes = max(self.episodes * 3, 10000)  # Allow training to go much longer if needed
+            
+            while episode_num < max_training_episodes:
                 # Check for stop signal at the beginning of each episode
                 if self.should_stop:
                     stopping_reason = "Training stopped by user"
@@ -123,6 +127,7 @@ class TrainingWorker(QObject):
                         break
                     
                     episodes_list.append(episode)
+                    episode_num += 1
                     
                     if episode.reached_goal:
                         successful_episodes += 1
@@ -135,11 +140,27 @@ class TrainingWorker(QObject):
                             self.agent.training_phase = "converged"
                             break
                     
+                    # Check for convergence every 100 episodes (after initial episodes are complete)
+                    if episode_num >= 100 and episode_num >= self.episodes:
+                        recent_episodes = episodes_list[-100:]
+                        recent_success = sum(1 for ep in recent_episodes if ep.reached_goal)
+                        success_rate = recent_success / len(recent_episodes)
+                        
+                        # Consider converged if success rate is 95% or higher over last 100 episodes
+                        if success_rate >= 0.95:
+                            converged = True
+                            stopping_reason = f"Training converged with {success_rate:.1%} success rate over last 100 episodes (completed {episode_num} episodes)"
+                            self.agent.training_phase = "converged"
+                            break
+                    
+                    # Update target episodes for UI progress if we're going beyond initial estimate
+                    current_target = max(self.episodes, episode_num + 100) if episode_num > self.episodes else self.episodes
+                    
                     # Emit progress signal for every episode (lightweight)
-                    self.progress_updated.emit(episode_num + 1, self.episodes)
+                    self.progress_updated.emit(episode_num, current_target)
                     
                     # Only emit detailed episode data occasionally to avoid overwhelming UI
-                    if (episode_num + 1) % self.episode_update_interval == 0 or episode_num == self.episodes - 1:
+                    if episode_num % self.episode_update_interval == 0 or episode_num == current_target:
                         self.episode_completed.emit(episode)
                         
                 except Exception as episode_error:
@@ -158,12 +179,13 @@ class TrainingWorker(QObject):
             total_reward = sum(ep.total_reward for ep in episodes_list)
             average_reward = total_reward / len(episodes_list) if episodes_list else 0.0
             
-            # Check convergence (only if not already early stopped)
-            converged = early_stopped
-            if not early_stopped and len(episodes_list) >= 100:
+            # Check convergence (only if not already early stopped or converged)
+            if not early_stopped and not converged and len(episodes_list) >= 100:
                 recent_success = sum(1 for ep in episodes_list[-100:] if ep.reached_goal)
-                converged = recent_success >= 90
-                if converged:
+                # Use lower threshold for final check if training was manually stopped
+                final_converged = recent_success >= 90  # 90% threshold for manual stops
+                if final_converged:
+                    converged = True
                     self.agent.training_phase = "converged"
                     stopping_reason = f"Converged with {recent_success}% success rate over last 100 episodes"
             
@@ -557,24 +579,33 @@ class RLController(QObject):
     
     def _start_next_visual_episode(self):
         """Start the next visual training episode."""
-        if self._visual_episodes_remaining <= 0:
-            self._complete_visual_training()
-            return
-        
-        # Check if we should stop early due to achieving validation criteria
+        # Check if we've reached convergence regardless of episode count
         episodes = self._agent.training_history
         if episodes:
             episodes_completed = len(episodes)
             successful_episodes = sum(1 for ep in episodes if ep.reached_goal)
             success_rate = successful_episodes / episodes_completed if episodes_completed > 0 else 0.0
             
-            # Stop early if we meet validation criteria and have high success rate
-            if (episodes_completed >= 50 and successful_episodes >= 10 and success_rate >= 0.95):
-                self._complete_visual_training(
-                    early_stopped=True, 
-                    stopping_reason=f"Training criteria exceeded: {success_rate:.1%} success rate with {successful_episodes} successful episodes out of {episodes_completed} total"
-                )
-                return
+            # Check for convergence with 95% success rate (higher threshold for visual training)
+            if (episodes_completed >= 100 and success_rate >= 0.95):
+                # Check last 100 episodes for consistency
+                recent_episodes = episodes[-100:]
+                recent_successful = sum(1 for ep in recent_episodes if ep.reached_goal)
+                recent_success_rate = recent_successful / len(recent_episodes)
+                
+                if recent_success_rate >= 0.95:
+                    self._complete_visual_training(
+                        early_stopped=True, 
+                        stopping_reason=f"Training converged: {recent_success_rate:.1%} success rate over last 100 episodes (completed {episodes_completed} episodes)"
+                    )
+                    return
+            
+            # If we've exceeded the original episode target but haven't converged, continue training
+            # (until we hit convergence or the user stops manually)
+            if self._visual_episodes_remaining <= 0 and episodes_completed >= self._original_episode_target:
+                # Continue training beyond original target, but update the remaining count for UI feedback
+                self._visual_episodes_remaining = 100  # Add more episodes to continue training
+                print(f"Continuing visual training beyond {self._original_episode_target} episodes to achieve convergence...")
         
         # Start new episode
         if self._agent.start_visual_episode(self._grid, self._start_coord, self._target_coord):
