@@ -1,0 +1,607 @@
+{
+  "checkpoint_id": "Generated_Maze_7x7_ep15_20250925_152257",
+  "timestamp": "2025-09-25T15:22:57.254012",
+  "maze_name": "Generated_Maze_7x7",
+  "maze_file_path": "/Users/dcarty/dev/python/ai-demo/saved_mazes/Generated_Maze_7x7_20250925_152257.json",
+  "maze_hash": "d38aec64e3782c736be918aa29ef3133",
+  "episode_number": 15,
+  "total_episodes": 25,
+  "episodes_completed": 28,
+  "success_rate": 0.8571428571428571,
+  "epsilon": 0.3710275875273311,
+  "agent_state": {
+    "epsilon": 0.3710275875273311,
+    "training_phase": "training",
+    "episodes_completed": 15,
+    "training_history": [
+      {
+        "number": 0,
+        "steps": 253,
+        "total_reward": -886.0,
+        "reached_goal": true,
+        "epsilon_used": 0.4,
+        "elapsed_time": 0.020125865936279297
+      },
+      {
+        "number": 1,
+        "steps": 401,
+        "total_reward": -1870.0,
+        "reached_goal": true,
+        "epsilon_used": 0.398,
+        "elapsed_time": 0.01353001594543457
+      },
+      {
+        "number": 1,
+        "steps": 401,
+        "total_reward": -1870.0,
+        "reached_goal": true,
+        "epsilon_used": 0.398,
+        "elapsed_time": 0.01353001594543457
+      },
+      {
+        "number": 2,
+        "steps": 229,
+        "total_reward": -1050.0,
+        "reached_goal": true,
+        "epsilon_used": 0.39601000000000003,
+        "elapsed_time": 0.0074961185455322266
+      },
+      {
+        "number": 2,
+        "steps": 229,
+        "total_reward": -1050.0,
+        "reached_goal": true,
+        "epsilon_used": 0.39601000000000003,
+        "elapsed_time": 0.0074961185455322266
+      },
+      {
+        "number": 3,
+        "steps": 87,
+        "total_reward": -158.0,
+        "reached_goal": true,
+        "epsilon_used": 0.39402995,
+        "elapsed_time": 0.002929210662841797
+      },
+      {
+        "number": 3,
+        "steps": 87,
+        "total_reward": -158.0,
+        "reached_goal": true,
+        "epsilon_used": 0.39402995,
+        "elapsed_time": 0.002929210662841797
+      },
+      {
+        "number": 4,
+        "steps": 97,
+        "total_reward": -293.0,
+        "reached_goal": true,
+        "epsilon_used": 0.39205980025000003,
+        "elapsed_time": 0.0032367706298828125
+      },
+      {
+        "number": 4,
+        "steps": 97,
+        "total_reward": -293.0,
+        "reached_goal": true,
+        "epsilon_used": 0.39205980025000003,
+        "elapsed_time": 0.0032367706298828125
+      },
+      {
+        "number": 5,
+        "steps": 500,
+        "total_reward": -2377.0,
+        "reached_goal": false,
+        "epsilon_used": 0.39009950124875004,
+        "elapsed_time": 0.01670074462890625
+      },
+      {
+        "number": 5,
+        "steps": 500,
+        "total_reward": -2377.0,
+        "reached_goal": false,
+        "epsilon_used": 0.39009950124875004,
+        "elapsed_time": 0.01670074462890625
+      },
+      {
+        "number": 6,
+        "steps": 221,
+        "total_reward": -1129.0,
+        "reached_goal": true,
+        "epsilon_used": 0.38814900374250627,
+        "elapsed_time": 0.007322072982788086
+      },
+      {
+        "number": 6,
+        "steps": 221,
+        "total_reward": -1129.0,
+        "reached_goal": true,
+        "epsilon_used": 0.38814900374250627,
+        "elapsed_time": 0.007322072982788086
+      },
+      {
+        "number": 7,
+        "steps": 103,
+        "total_reward": -216.0,
+        "reached_goal": true,
+        "epsilon_used": 0.3862082587237937,
+        "elapsed_time": 0.0034859180450439453
+      },
+      {
+        "number": 7,
+        "steps": 103,
+        "total_reward": -216.0,
+        "reached_goal": true,
+        "epsilon_used": 0.3862082587237937,
+        "elapsed_time": 0.0034859180450439453
+      },
+      {
+        "number": 8,
+        "steps": 101,
+        "total_reward": -349.0,
+        "reached_goal": true,
+        "epsilon_used": 0.38427721743017473,
+        "elapsed_time": 0.003310680389404297
+      },
+      {
+        "number": 8,
+        "steps": 101,
+        "total_reward": -349.0,
+        "reached_goal": true,
+        "epsilon_used": 0.38427721743017473,
+        "elapsed_time": 0.003310680389404297
+      },
+      {
+        "number": 9,
+        "steps": 39,
+        "total_reward": -38.0,
+        "reached_goal": true,
+        "epsilon_used": 0.38235583134302387,
+        "elapsed_time": 0.0013659000396728516
+      },
+      {
+        "number": 9,
+        "steps": 39,
+        "total_reward": -38.0,
+        "reached_goal": true,
+        "epsilon_used": 0.38235583134302387,
+        "elapsed_time": 0.0013659000396728516
+      },
+      {
+        "number": 10,
+        "steps": 31,
+        "total_reward": 42.0,
+        "reached_goal": true,
+        "epsilon_used": 0.3804440521863087,
+        "elapsed_time": 0.013154029846191406
+      },
+      {
+        "number": 11,
+        "steps": 37,
+        "total_reward": 17.0,
+        "reached_goal": true,
+        "epsilon_used": 0.37854183192537716,
+        "elapsed_time": 0.0013451576232910156
+      },
+      {
+        "number": 11,
+        "steps": 37,
+        "total_reward": 17.0,
+        "reached_goal": true,
+        "epsilon_used": 0.37854183192537716,
+        "elapsed_time": 0.0013451576232910156
+      },
+      {
+        "number": 12,
+        "steps": 41,
+        "total_reward": -1.0,
+        "reached_goal": true,
+        "epsilon_used": 0.37664912276575024,
+        "elapsed_time": 0.0014238357543945312
+      },
+      {
+        "number": 12,
+        "steps": 41,
+        "total_reward": -1.0,
+        "reached_goal": true,
+        "epsilon_used": 0.37664912276575024,
+        "elapsed_time": 0.0014238357543945312
+      },
+      {
+        "number": 13,
+        "steps": 41,
+        "total_reward": -65.0,
+        "reached_goal": true,
+        "epsilon_used": 0.3747658771519215,
+        "elapsed_time": 0.001405954360961914
+      },
+      {
+        "number": 13,
+        "steps": 41,
+        "total_reward": -65.0,
+        "reached_goal": true,
+        "epsilon_used": 0.3747658771519215,
+        "elapsed_time": 0.001405954360961914
+      },
+      {
+        "number": 14,
+        "steps": 500,
+        "total_reward": -2522.0,
+        "reached_goal": false,
+        "epsilon_used": 0.3728920477661619,
+        "elapsed_time": 0.017100095748901367
+      },
+      {
+        "number": 14,
+        "steps": 500,
+        "total_reward": -2522.0,
+        "reached_goal": false,
+        "epsilon_used": 0.3728920477661619,
+        "elapsed_time": 0.017100095748901367
+      }
+    ],
+    "config": {
+      "learning_rate": 0.15,
+      "discount_factor": 0.98,
+      "epsilon": 0.4,
+      "epsilon_decay": 0.995,
+      "epsilon_min": 0.03,
+      "max_episodes": 25,
+      "max_steps_per_episode": 500,
+      "reward_goal": 100.0,
+      "reward_wall": -10.0,
+      "reward_step": -0.5
+    }
+  },
+  "q_table": {
+    "1,1": {
+      "up": 0.0,
+      "down": -2.8109395848074707,
+      "left": 0.0,
+      "right": 0.0
+    },
+    "3,1": {
+      "up": 0.0,
+      "down": -1.2998053840090686,
+      "left": 0.0,
+      "right": -2.222235588351893
+    },
+    "4,1": {
+      "up": 0.0,
+      "down": 0.0,
+      "left": -3.416688810404529,
+      "right": -3.0365525359918553
+    },
+    "5,1": {
+      "up": 0.0,
+      "down": 10.646054247271257,
+      "left": 0.0,
+      "right": 0.0
+    },
+    "1,2": {
+      "up": -13.300812563517626,
+      "down": -4.3319411681087505,
+      "left": 0.0,
+      "right": 0.0
+    },
+    "3,2": {
+      "up": -3.4052167750756115,
+      "down": -1.518149708266209,
+      "left": 0.0,
+      "right": 0.0
+    },
+    "5,2": {
+      "up": 0.0,
+      "down": 11.211419405270405,
+      "left": 0.0,
+      "right": 0.0
+    },
+    "1,3": {
+      "up": -4.817962368070004,
+      "down": 0.0,
+      "left": 0.0,
+      "right": -2.4671498827598257
+    },
+    "2,3": {
+      "up": 0.0,
+      "down": 0.0,
+      "left": -9.382155934824937,
+      "right": -8.887531596426221
+    },
+    "3,3": {
+      "up": -4.5295762382274365,
+      "down": 0.0,
+      "left": -4.921547249068309,
+      "right": 0.0
+    },
+    "5,3": {
+      "up": 0.0,
+      "down": 13.656565940849156,
+      "left": 0.0,
+      "right": 0.0
+    },
+    "5,4": {
+      "up": 0.0,
+      "down": 21.478109062228874,
+      "left": 0.0,
+      "right": 0.0
+    },
+    "3,5": {
+      "up": 0.0,
+      "down": 0.0,
+      "left": 93.1840176820309,
+      "right": 0.0
+    },
+    "4,5": {
+      "up": 0.0,
+      "down": 0.0,
+      "left": 67.34201333773282,
+      "right": 0.0
+    },
+    "5,5": {
+      "up": 0.0,
+      "down": 0.0,
+      "left": 39.43707944390162,
+      "right": 0.0
+    }
+  },
+  "training_history": [
+    {
+      "number": 0,
+      "steps": 253,
+      "total_reward": -886.0,
+      "reached_goal": true,
+      "epsilon_used": 0.4,
+      "elapsed_time": 0.020125865936279297
+    },
+    {
+      "number": 1,
+      "steps": 401,
+      "total_reward": -1870.0,
+      "reached_goal": true,
+      "epsilon_used": 0.398,
+      "elapsed_time": 0.01353001594543457
+    },
+    {
+      "number": 1,
+      "steps": 401,
+      "total_reward": -1870.0,
+      "reached_goal": true,
+      "epsilon_used": 0.398,
+      "elapsed_time": 0.01353001594543457
+    },
+    {
+      "number": 2,
+      "steps": 229,
+      "total_reward": -1050.0,
+      "reached_goal": true,
+      "epsilon_used": 0.39601000000000003,
+      "elapsed_time": 0.0074961185455322266
+    },
+    {
+      "number": 2,
+      "steps": 229,
+      "total_reward": -1050.0,
+      "reached_goal": true,
+      "epsilon_used": 0.39601000000000003,
+      "elapsed_time": 0.0074961185455322266
+    },
+    {
+      "number": 3,
+      "steps": 87,
+      "total_reward": -158.0,
+      "reached_goal": true,
+      "epsilon_used": 0.39402995,
+      "elapsed_time": 0.002929210662841797
+    },
+    {
+      "number": 3,
+      "steps": 87,
+      "total_reward": -158.0,
+      "reached_goal": true,
+      "epsilon_used": 0.39402995,
+      "elapsed_time": 0.002929210662841797
+    },
+    {
+      "number": 4,
+      "steps": 97,
+      "total_reward": -293.0,
+      "reached_goal": true,
+      "epsilon_used": 0.39205980025000003,
+      "elapsed_time": 0.0032367706298828125
+    },
+    {
+      "number": 4,
+      "steps": 97,
+      "total_reward": -293.0,
+      "reached_goal": true,
+      "epsilon_used": 0.39205980025000003,
+      "elapsed_time": 0.0032367706298828125
+    },
+    {
+      "number": 5,
+      "steps": 500,
+      "total_reward": -2377.0,
+      "reached_goal": false,
+      "epsilon_used": 0.39009950124875004,
+      "elapsed_time": 0.01670074462890625
+    },
+    {
+      "number": 5,
+      "steps": 500,
+      "total_reward": -2377.0,
+      "reached_goal": false,
+      "epsilon_used": 0.39009950124875004,
+      "elapsed_time": 0.01670074462890625
+    },
+    {
+      "number": 6,
+      "steps": 221,
+      "total_reward": -1129.0,
+      "reached_goal": true,
+      "epsilon_used": 0.38814900374250627,
+      "elapsed_time": 0.007322072982788086
+    },
+    {
+      "number": 6,
+      "steps": 221,
+      "total_reward": -1129.0,
+      "reached_goal": true,
+      "epsilon_used": 0.38814900374250627,
+      "elapsed_time": 0.007322072982788086
+    },
+    {
+      "number": 7,
+      "steps": 103,
+      "total_reward": -216.0,
+      "reached_goal": true,
+      "epsilon_used": 0.3862082587237937,
+      "elapsed_time": 0.0034859180450439453
+    },
+    {
+      "number": 7,
+      "steps": 103,
+      "total_reward": -216.0,
+      "reached_goal": true,
+      "epsilon_used": 0.3862082587237937,
+      "elapsed_time": 0.0034859180450439453
+    },
+    {
+      "number": 8,
+      "steps": 101,
+      "total_reward": -349.0,
+      "reached_goal": true,
+      "epsilon_used": 0.38427721743017473,
+      "elapsed_time": 0.003310680389404297
+    },
+    {
+      "number": 8,
+      "steps": 101,
+      "total_reward": -349.0,
+      "reached_goal": true,
+      "epsilon_used": 0.38427721743017473,
+      "elapsed_time": 0.003310680389404297
+    },
+    {
+      "number": 9,
+      "steps": 39,
+      "total_reward": -38.0,
+      "reached_goal": true,
+      "epsilon_used": 0.38235583134302387,
+      "elapsed_time": 0.0013659000396728516
+    },
+    {
+      "number": 9,
+      "steps": 39,
+      "total_reward": -38.0,
+      "reached_goal": true,
+      "epsilon_used": 0.38235583134302387,
+      "elapsed_time": 0.0013659000396728516
+    },
+    {
+      "number": 10,
+      "steps": 31,
+      "total_reward": 42.0,
+      "reached_goal": true,
+      "epsilon_used": 0.3804440521863087,
+      "elapsed_time": 0.013154029846191406
+    },
+    {
+      "number": 11,
+      "steps": 37,
+      "total_reward": 17.0,
+      "reached_goal": true,
+      "epsilon_used": 0.37854183192537716,
+      "elapsed_time": 0.0013451576232910156
+    },
+    {
+      "number": 11,
+      "steps": 37,
+      "total_reward": 17.0,
+      "reached_goal": true,
+      "epsilon_used": 0.37854183192537716,
+      "elapsed_time": 0.0013451576232910156
+    },
+    {
+      "number": 12,
+      "steps": 41,
+      "total_reward": -1.0,
+      "reached_goal": true,
+      "epsilon_used": 0.37664912276575024,
+      "elapsed_time": 0.0014238357543945312
+    },
+    {
+      "number": 12,
+      "steps": 41,
+      "total_reward": -1.0,
+      "reached_goal": true,
+      "epsilon_used": 0.37664912276575024,
+      "elapsed_time": 0.0014238357543945312
+    },
+    {
+      "number": 13,
+      "steps": 41,
+      "total_reward": -65.0,
+      "reached_goal": true,
+      "epsilon_used": 0.3747658771519215,
+      "elapsed_time": 0.001405954360961914
+    },
+    {
+      "number": 13,
+      "steps": 41,
+      "total_reward": -65.0,
+      "reached_goal": true,
+      "epsilon_used": 0.3747658771519215,
+      "elapsed_time": 0.001405954360961914
+    },
+    {
+      "number": 14,
+      "steps": 500,
+      "total_reward": -2522.0,
+      "reached_goal": false,
+      "epsilon_used": 0.3728920477661619,
+      "elapsed_time": 0.017100095748901367
+    },
+    {
+      "number": 14,
+      "steps": 500,
+      "total_reward": -2522.0,
+      "reached_goal": false,
+      "epsilon_used": 0.3728920477661619,
+      "elapsed_time": 0.017100095748901367
+    }
+  ],
+  "config": {
+    "learning_rate": 0.15,
+    "discount_factor": 0.98,
+    "epsilon": 0.4,
+    "epsilon_decay": 0.995,
+    "epsilon_min": 0.03,
+    "max_episodes": 25,
+    "max_steps_per_episode": 500,
+    "reward_goal": 100.0,
+    "reward_wall": -10.0,
+    "reward_step": -0.5,
+    "use_smart_rewards": true,
+    "reward_progress": 5.0,
+    "reward_exploration": 1.0,
+    "reward_dead_end": -15.0,
+    "reward_revisit": -2.0,
+    "reward_stuck": -10.0,
+    "reward_backward": -1.0,
+    "use_distance_guidance": true,
+    "detect_dead_ends": true,
+    "stuck_threshold": 5
+  },
+  "grid_info": {
+    "width": 7,
+    "height": 7,
+    "start": [
+      3,
+      3
+    ],
+    "target": [
+      2,
+      5
+    ]
+  }
+}

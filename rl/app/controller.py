@@ -11,6 +11,7 @@ from ..utils.grid_factory import (
     place_start_and_target
 )
 from ..utils.rng import set_global_seed
+from ..utils.checkpoint_manager import CheckpointManager
 from .fsm import RLStateMachine, RLState
 
 
@@ -222,6 +223,9 @@ class RLController(QObject):
         self._start_coord: Optional[Coord] = None
         self._target_coord: Optional[Coord] = None
         self._config = RLConfig()
+        
+        # Checkpoint management
+        self._checkpoint_manager = CheckpointManager()
         
         # Training worker thread
         self._training_thread: Optional[QThread] = None
@@ -1207,6 +1211,121 @@ class RLController(QObject):
     def __del__(self):
         """Destructor to ensure proper cleanup."""
         self.cleanup()
+    
+    # Checkpoint Management
+    
+    def load_checkpoint(self, checkpoint_file: str) -> tuple[bool, str]:
+        """Load a training checkpoint."""
+        try:
+            from pathlib import Path
+            
+            checkpoint_path = Path(checkpoint_file)
+            if not checkpoint_path.exists():
+                return False, f"Checkpoint file not found: {checkpoint_file}"
+            
+            # Load checkpoint data
+            checkpoint = self._checkpoint_manager.load_checkpoint(checkpoint_path.stem)
+            
+            if not checkpoint:
+                return False, "Failed to load checkpoint data"
+            
+            # Validate that we have a compatible maze
+            if not self._grid:
+                return False, "No maze loaded. Please load a maze before loading a checkpoint."
+            
+            # Check if the checkpoint is compatible with the current maze
+            current_maze_hash = self._checkpoint_manager.generate_maze_hash(
+                self._grid, self._start_coord, self._target_coord
+            )
+            
+            if checkpoint.maze_hash != current_maze_hash:
+                # Try to load the associated maze
+                maze_data = self._checkpoint_manager.load_maze_for_checkpoint(checkpoint)
+                if not maze_data:
+                    return False, f"Checkpoint requires a different maze (hash: {checkpoint.maze_hash[:8]}...). Load the correct maze first or use a different checkpoint."
+                
+                # Load the maze into the current grid
+                try:
+                    # Import maze utilities
+                    import sys
+                    from pathlib import Path as PathLib
+                    
+                    # Add project root to path if not already there
+                    project_root = PathLib(__file__).parent.parent.parent
+                    if str(project_root) not in sys.path:
+                        sys.path.insert(0, str(project_root))
+                    
+                    from utils.maze_serialization import apply_maze_to_grid
+                    from ..utils.grid_factory import create_empty_grid
+                    
+                    # Create a new grid with the right dimensions
+                    new_grid = create_empty_grid(maze_data.width, maze_data.height)
+                    
+                    # Apply the loaded maze to the grid
+                    apply_maze_to_grid(maze_data, new_grid)
+                    
+                    # Update controller with new grid and coordinates
+                    self._grid = new_grid
+                    self._start_coord = maze_data.start
+                    self._target_coord = maze_data.target
+                    
+                    # Emit grid update signal
+                    self.grid_updated.emit()
+                    
+                except Exception as maze_error:
+                    return False, f"Failed to load associated maze: {str(maze_error)}"
+            
+            # Stop any ongoing training first
+            if self._state_machine.is_training() or self._state_machine.is_paused():
+                if self._training_worker:
+                    self._training_worker.stop()
+                self._cleanup_training_thread()
+                self._state_machine.reset_to_idle()
+            
+            # Load the agent state
+            success = self._agent.load_state(
+                checkpoint.agent_epsilon,
+                checkpoint.agent_training_phase,
+                checkpoint.agent_episodes_completed,
+                checkpoint.agent_training_history
+            )
+            
+            if not success:
+                return False, "Failed to load agent state from checkpoint"
+            
+            # Apply checkpoint to grid (Q-values)
+            self._checkpoint_manager.apply_checkpoint_to_grid(checkpoint, self._grid)
+            
+            # Update agent config with checkpoint config if available
+            if hasattr(checkpoint, 'config') and checkpoint.config:
+                # Merge checkpoint config with current config
+                for key, value in checkpoint.config.items():
+                    if hasattr(self._config, key):
+                        setattr(self._config, key, value)
+                
+                # Update agent config
+                self._agent.config = self._config
+            
+            # Reset visual training state
+            self._visual_successful_times = []
+            self._visual_no_improvement_count = 0
+            self._visual_best_time = float('inf')
+            self._original_episode_target = 0
+            
+            # Emit updates
+            self.grid_updated.emit()
+            
+            # Build success message
+            message = f"Checkpoint loaded successfully!\\nEpisodes: {checkpoint.agent_episodes_completed}\\nEpsilon: {checkpoint.agent_epsilon:.3f}"
+            if checkpoint.agent_training_history:
+                successful = sum(1 for ep in checkpoint.agent_training_history if ep.reached_goal)
+                success_rate = successful / len(checkpoint.agent_training_history)
+                message += f"\\nSuccess Rate: {success_rate:.1%}"
+            
+            return True, message
+            
+        except Exception as e:
+            return False, f"Error loading checkpoint: {str(e)}"
     
     # Utility methods
     

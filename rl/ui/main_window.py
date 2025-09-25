@@ -187,6 +187,20 @@ class MainWindow(QMainWindow):
         grid_layout.addWidget(self.save_maze_btn)
         grid_layout.addWidget(self.load_maze_btn)
         
+        # Checkpoint controls
+        checkpoint_group = QGroupBox("Training Checkpoints")
+        checkpoint_layout = QVBoxLayout(checkpoint_group)
+        
+        self.load_checkpoint_btn = QPushButton("Load Checkpoint")
+        self.load_checkpoint_btn.setToolTip("Load a pre-trained checkpoint to continue or visualize training")
+        checkpoint_layout.addWidget(self.load_checkpoint_btn)
+        
+        # Checkpoint info display
+        self.checkpoint_info_label = QLabel("No checkpoint loaded")
+        self.checkpoint_info_label.setStyleSheet("color: #666666; font-size: 11px;")
+        self.checkpoint_info_label.setWordWrap(True)
+        checkpoint_layout.addWidget(self.checkpoint_info_label)
+        
         # Edit mode
         edit_group = QGroupBox("Edit Mode")
         edit_layout = QVBoxLayout(edit_group)
@@ -269,6 +283,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(rl_group)
         layout.addLayout(episodes_layout)
         layout.addWidget(grid_group)
+        layout.addWidget(checkpoint_group)
         layout.addWidget(edit_group)
         layout.addWidget(params_group)
         layout.addWidget(viz_group)
@@ -486,6 +501,7 @@ class MainWindow(QMainWindow):
         self.maze_btn.clicked.connect(self._on_maze_clicked)
         self.save_maze_btn.clicked.connect(self._on_save_maze)
         self.load_maze_btn.clicked.connect(self._on_load_maze)
+        self.load_checkpoint_btn.clicked.connect(self._on_load_checkpoint)
         
         # Parameter updates
         self.lr_spin.valueChanged.connect(self._on_params_changed)
@@ -831,6 +847,150 @@ class MainWindow(QMainWindow):
             import traceback
             print(f"Error loading maze: {e}")
             traceback.print_exc()
+    
+    def _on_load_checkpoint(self):
+        """Handle load checkpoint button click."""
+        from PySide6.QtWidgets import QFileDialog, QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QLabel, QListWidgetItem
+        from pathlib import Path
+        
+        # Check if we have a maze loaded
+        if not self.controller.grid:
+            QMessageBox.warning(self, "No Maze", "Please load or generate a maze first before loading a checkpoint.")
+            return
+        
+        # Get checkpoint directory
+        checkpoint_dir = Path("training_checkpoints")
+        if not checkpoint_dir.exists():
+            QMessageBox.warning(self, "No Checkpoints", "No training_checkpoints directory found. Run background training first to create checkpoints.")
+            return
+        
+        # Get current maze hash for filtering
+        current_maze_hash = self.controller._checkpoint_manager.generate_maze_hash(
+            self.controller.grid,
+            self.controller.start_coord,
+            self.controller.target_coord
+        )
+        
+        # Find compatible checkpoints
+        compatible_checkpoints = []
+        checkpoint_files = list(checkpoint_dir.glob("*.json"))
+        
+        if not checkpoint_files:
+            QMessageBox.information(self, "No Checkpoints", "No checkpoint files found. Run background training first to create checkpoints.")
+            return
+        
+        for checkpoint_file in checkpoint_files:
+            try:
+                # Load checkpoint metadata to check compatibility
+                checkpoint = self.controller._checkpoint_manager.load_checkpoint(checkpoint_file.stem)
+                if checkpoint and checkpoint.maze_hash == current_maze_hash:
+                    compatible_checkpoints.append((checkpoint_file, checkpoint))
+            except Exception as e:
+                print(f"Error reading checkpoint {checkpoint_file.name}: {e}")
+                continue
+        
+        if not compatible_checkpoints:
+            QMessageBox.information(
+                self, 
+                "No Compatible Checkpoints", 
+                f"No checkpoints found that match the current maze.\n\nCurrent maze hash: {current_maze_hash[:16]}...\n\nTip: Generate checkpoints for this maze by running background training, or load a different maze that has existing checkpoints."
+            )
+            return
+        
+        # Create custom dialog to show compatible checkpoints
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Load Training Checkpoint")
+        dialog.setMinimumSize(500, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Info label
+        info_label = QLabel(f"Compatible checkpoints for current maze ({len(compatible_checkpoints)} found):")
+        info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(info_label)
+        
+        # Checkpoint list
+        checkpoint_list = QListWidget()
+        
+        for checkpoint_file, checkpoint in compatible_checkpoints:
+            item = QListWidgetItem()
+            
+            # Create detailed checkpoint info
+            checkpoint_name = checkpoint_file.stem
+            episodes = checkpoint.agent_episodes_completed
+            epsilon = checkpoint.agent_epsilon
+            
+            # Calculate success rate if training history exists
+            success_info = ""
+            if checkpoint.agent_training_history:
+                successful = sum(1 for ep in checkpoint.agent_training_history if ep.reached_goal)
+                success_rate = successful / len(checkpoint.agent_training_history)
+                success_info = f" | Success: {success_rate:.1%}"
+            
+            # Format the display text
+            display_text = f"{checkpoint_name}\nEpisodes: {episodes} | Epsilon: {epsilon:.3f}{success_info}"
+            
+            item.setText(display_text)
+            item.setData(256, str(checkpoint_file))  # Store file path in user data
+            checkpoint_list.addItem(item)
+        
+        checkpoint_list.setCurrentRow(0)  # Select first item by default
+        layout.addWidget(checkpoint_list)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        load_btn = QPushButton("Load Selected")
+        cancel_btn = QPushButton("Cancel")
+        
+        button_layout.addStretch()
+        button_layout.addWidget(load_btn)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+        
+        # Connect buttons
+        load_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        # Handle double-click to load
+        checkpoint_list.itemDoubleClicked.connect(dialog.accept)
+        
+        # Show dialog and handle result
+        if dialog.exec() == QDialog.Accepted:
+            current_item = checkpoint_list.currentItem()
+            if current_item:
+                selected_checkpoint = current_item.data(256)  # Get stored file path
+                
+                try:
+                    # Load the checkpoint through the controller
+                    success, message = self.controller.load_checkpoint(selected_checkpoint)
+                    
+                    if success:
+                        # Update checkpoint info display
+                        checkpoint_name = Path(selected_checkpoint).stem
+                        agent = self.controller.agent
+                        info_text = f"Loaded: {checkpoint_name}\nEpisodes: {agent.episodes_completed}\nEpsilon: {agent.epsilon:.3f}"
+                        
+                        # Add success rate if available
+                        if agent.training_history:
+                            successful = sum(1 for ep in agent.training_history if ep.reached_goal)
+                            success_rate = successful / len(agent.training_history)
+                            info_text += f"\nSuccess Rate: {success_rate:.1%}"
+                        
+                        self.checkpoint_info_label.setText(info_text)
+                        self.checkpoint_info_label.setStyleSheet("color: #006600; font-size: 11px; font-weight: bold;")
+                        
+                        # Update statistics display
+                        self._update_statistics_display()
+                        
+                        QMessageBox.information(self, "Checkpoint Loaded", message)
+                    else:
+                        QMessageBox.warning(self, "Load Failed", message)
+                        
+                except Exception as e:
+                    QMessageBox.warning(self, "Load Error", f"Failed to load checkpoint: {str(e)}")
+                    print(f"Error loading checkpoint: {e}")
+                    import traceback
+                    traceback.print_exc()
     
     def _on_params_changed(self):
         """Handle parameter changes."""

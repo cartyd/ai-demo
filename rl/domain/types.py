@@ -221,6 +221,51 @@ class PathfindingResult:
         return self.found and self.path is not None and len(self.path) > 0
 
 
+@dataclass
+class TrainingCheckpoint:
+    """Represents a saved training checkpoint tied to a specific maze."""
+    checkpoint_id: str
+    timestamp: str
+    maze_name: str
+    maze_file_path: str  # Path to the saved maze file
+    maze_hash: str  # Hash of maze structure for validation
+    episode_number: int
+    total_episodes: int
+    episodes_completed: int
+    success_rate: float
+    epsilon: float
+    agent_state: Dict  # Serialized agent state
+    q_table: Dict[str, Dict[str, float]]  # Serialized Q-table: {"x,y": {"up": 0.5, ...}}
+    training_history: list[Episode]
+    config: RLConfig
+    grid_info: Dict  # Grid dimensions, start, target positions
+    
+    @property
+    def completion_percentage(self) -> float:
+        """Get training completion percentage."""
+        return (self.episodes_completed / self.total_episodes) * 100 if self.total_episodes > 0 else 0
+    
+    @property
+    def display_name(self) -> str:
+        """Get display name for UI."""
+        return f"{self.maze_name} - Ep {self.episode_number} ({self.completion_percentage:.1f}%) - {self.success_rate:.1%} success"
+
+
+@dataclass
+class CheckpointMetadata:
+    """Metadata for training checkpoint management."""
+    checkpoint_id: str
+    maze_name: str
+    maze_hash: str
+    timestamp: str
+    episode_number: int
+    success_rate: float
+    completion_percentage: float
+    file_path: str
+    file_size: int
+    is_compatible: bool = True  # Whether checkpoint is compatible with current maze
+
+
 # Action mappings
 ACTION_TO_INT: Dict[Action, ActionInt] = {
     "up": 0,

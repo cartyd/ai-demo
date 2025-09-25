@@ -1,0 +1,17 @@
+{
+  "checkpoint_id": "Generated_Maze_10x10_ep25_20250925_151836",
+  "timestamp": "2025-09-25T15:18:36.194868",
+  "maze_name": "Generated_Maze_10x10",
+  "maze_file_path": "/Users/dcarty/dev/python/ai-demo/saved_mazes/Generated_Maze_10x10_20250925_151836.json",
+  "maze_hash": "b23c8006e38a8e0c00df2bafea91f939",
+  "episode_number": 25,
+  "total_episodes": 50,
+  "episodes_completed": 49,
+  "success_rate": 0.0,
+  "epsilon": 0.35288809717952047,
+  "agent_state": {
+    "epsilon": 0.35288809717952047,
+    "training_phase": "training",
+    "episodes_completed": 25,
+    "training_history": [
+      

@@ -2,7 +2,7 @@
 
 import numpy as np
 import time
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Dict
 from .types import (
     Coord, Grid, RLConfig, ActionInt, QValues, Episode, TrainingResult, 
     PathfindingResult, ACTION_DELTAS, TrainingPhase, TrainingMode
@@ -397,6 +397,166 @@ class QLearningAgent:
         """Decay epsilon for less exploration over time."""
         self.epsilon = max(self.config.epsilon_min, 
                           self.epsilon * self.config.epsilon_decay)
+    
+    def get_agent_state(self) -> Dict:
+        """Get current agent state for checkpointing."""
+        # Convert training history to serializable format
+        training_history_dict = []
+        for ep in self.training_history:
+            training_history_dict.append({
+                "number": ep.number,
+                "steps": ep.steps,
+                "total_reward": ep.total_reward,
+                "reached_goal": ep.reached_goal,
+                "epsilon_used": ep.epsilon_used,
+                "elapsed_time": getattr(ep, 'elapsed_time', 0.0)
+            })
+        
+        return {
+            "epsilon": self.epsilon,
+            "training_phase": self.training_phase,
+            "episodes_completed": self.episodes_completed,
+            "training_history": training_history_dict,
+            "config": {
+                "learning_rate": self.config.learning_rate,
+                "discount_factor": self.config.discount_factor,
+                "epsilon": self.config.epsilon,
+                "epsilon_decay": self.config.epsilon_decay,
+                "epsilon_min": self.config.epsilon_min,
+                "max_episodes": self.config.max_episodes,
+                "max_steps_per_episode": self.config.max_steps_per_episode,
+                "reward_goal": self.config.reward_goal,
+                "reward_wall": self.config.reward_wall,
+                "reward_step": self.config.reward_step
+            }
+        }
+    
+    def load_agent_state(self, state: Dict):
+        """Load agent state from checkpoint."""
+        from .types import Episode
+        
+        self.epsilon = state.get("epsilon", self.config.epsilon)
+        self.training_phase = state.get("training_phase", "training")
+        self.episodes_completed = state.get("episodes_completed", 0)
+        
+        # Reconstruct Episode objects from dictionaries
+        training_history_data = state.get("training_history", [])
+        self.training_history = []
+        
+        for ep_data in training_history_data:
+            if isinstance(ep_data, dict):
+                episode = Episode(
+                    number=ep_data.get("number", 0),
+                    steps=ep_data.get("steps", 0),
+                    total_reward=ep_data.get("total_reward", 0.0),
+                    reached_goal=ep_data.get("reached_goal", False),
+                    epsilon_used=ep_data.get("epsilon_used", 0.0),
+                    elapsed_time=ep_data.get("elapsed_time", 0.0)
+                )
+                self.training_history.append(episode)
+            else:
+                # Already an Episode object
+                self.training_history.append(ep_data)
+    
+    def train_background_with_checkpoints(self, grid: Grid, start: Coord, target: Coord, 
+                                        episodes: Optional[int] = None,
+                                        checkpoint_interval: int = 100,
+                                        checkpoint_callback: Optional[Callable[[int, Dict], None]] = None) -> TrainingResult:
+        """Train in background mode with automatic checkpoint saving."""
+        max_episodes = episodes or self.config.max_episodes
+        env = QLearningEnvironment(grid, start, target, self.config)
+        
+        # Store target for smart exploration
+        self._target_coord = target
+        self._current_env = env
+        
+        # Reset if starting fresh
+        if self.episodes_completed == 0:
+            grid.reset_q_values()
+        
+        self.training_phase = "training"
+        episodes_list = list(self.training_history)  # Start with existing history
+        successful_episodes = sum(1 for ep in episodes_list if ep.reached_goal)
+        
+        # Early stopping tracking
+        best_success_rate = 0.0
+        episodes_without_improvement = 0
+        
+        print(f"Starting background training from episode {self.episodes_completed}...")
+        
+        for episode_num in range(self.episodes_completed, max_episodes):
+            episode_start_time = time.time()
+            episode = self.train_episode(env)
+            episode.elapsed_time = time.time() - episode_start_time
+            
+            episodes_list.append(episode)
+            
+            if episode.reached_goal:
+                successful_episodes += 1
+            
+            # Update training history
+            self.training_history = episodes_list
+            self.episodes_completed = episode_num + 1
+            
+            # Check for checkpointing
+            if checkpoint_callback and (episode_num + 1) % checkpoint_interval == 0:
+                agent_state = self.get_agent_state()
+                checkpoint_callback(episode_num + 1, agent_state)
+            
+            # Print progress occasionally
+            if (episode_num + 1) % 50 == 0:
+                recent_episodes = episodes_list[-50:]
+                recent_success = sum(1 for ep in recent_episodes if ep.reached_goal)
+                recent_success_rate = recent_success / len(recent_episodes)
+                print(f"Episode {episode_num + 1}: Success rate: {recent_success_rate:.1%}, Epsilon: {self.epsilon:.3f}")
+            
+            # Early stopping check
+            if self.config.enable_early_stopping and len(episodes_list) >= 100:
+                recent_100_episodes = episodes_list[-100:]
+                recent_success = sum(1 for ep in recent_100_episodes if ep.reached_goal)
+                current_success_rate = recent_success / 100
+                
+                if current_success_rate > best_success_rate + self.config.min_improvement_threshold:
+                    best_success_rate = current_success_rate
+                    episodes_without_improvement = 0
+                else:
+                    episodes_without_improvement += 1
+                
+                if episodes_without_improvement >= self.config.early_stop_patience:
+                    print(f"Early stopping at episode {episode_num + 1}. No improvement for {episodes_without_improvement} episodes.")
+                    break
+        
+        # Calculate final statistics
+        total_reward = sum(ep.total_reward for ep in episodes_list)
+        average_reward = total_reward / len(episodes_list) if episodes_list else 0.0
+        
+        # Check convergence
+        converged = False
+        if len(episodes_list) >= 100:
+            recent_success = sum(1 for ep in episodes_list[-100:] if ep.reached_goal)
+            converged = recent_success >= 90
+        
+        if converged:
+            self.training_phase = "converged"
+            print(f"Training converged! Success rate: {recent_success}%")
+        
+        # Final checkpoint
+        if checkpoint_callback:
+            agent_state = self.get_agent_state()
+            checkpoint_callback(self.episodes_completed, agent_state)
+        
+        result = TrainingResult(
+            episodes=episodes_list,
+            total_episodes=len(episodes_list),
+            successful_episodes=successful_episodes,
+            average_reward=average_reward,
+            final_epsilon=self.epsilon,
+            converged=converged,
+            early_stopped=episodes_without_improvement >= self.config.early_stop_patience if self.config.enable_early_stopping else False,
+            stopping_reason=f"Early stopped after {episodes_without_improvement} episodes without improvement" if episodes_without_improvement >= self.config.early_stop_patience else "Completed normally"
+        )
+        
+        return result
     
     def train_episode(self, env: QLearningEnvironment) -> Episode:
         """Train for one episode with timing."""
